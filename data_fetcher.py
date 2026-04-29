@@ -229,6 +229,24 @@ _HK_FIN_MAP = {
     "每股现金流": "cfps",
     "每股营业收入(元)": "revenue_per_share",
     "每股营业收入": "revenue_per_share",
+    "每股经营现金流(元)": "cfps",
+    "股东权益回报率(%)": "roe",
+    "销售净利率(%)": "net_margin",
+    "总资产回报率(%)": "roa",
+}
+
+# 港股财务分析API列名映射（stock_financial_hk_analysis_indicator_em）
+_HK_ANALYSIS_MAP = {
+    "OPERATE_INCOME": "revenue",
+    "HOLDER_PROFIT": "net_profit",
+    "BASIC_EPS": "eps",
+    "BPS": "bps",
+    "ROE_AVG": "roe",
+    "ROA": "roa",
+    "GROSS_PROFIT_RATIO": "gross_margin",
+    "NET_PROFIT_RATIO": "net_margin",
+    "DEBT_ASSET_RATIO": "debt_ratio",
+    "PER_NETCASH_OPERATE": "cfps",
 }
 
 _profile_hk_cache = {}
@@ -318,44 +336,36 @@ def _get_financial_data_impl(code: str, market: str) -> dict:
     elif market == MARKET_HK:
         code = normalize_hk_code(code)
         try:
-            df = ak.stock_hk_financial_indicator_em(symbol=code)
-            if not df.empty:
-                # 查找日期列（AKShare不同版本列名可能不同）
-                date_col = None
-                for candidate in ("日期", "报告期", "报告日期", "截止日期", "财报周期"):
-                    if candidate in df.columns:
-                        date_col = candidate
-                        break
-                if date_col:
-                    df = df.sort_values(date_col)
+            df = ak.stock_financial_hk_analysis_indicator_em(symbol=code)
+            if df.empty:
+                result["error"] = "无财务数据"
+                return result
 
-                history = []
-                for idx, (_, row) in enumerate(df.iterrows()):
-                    entry = {"quarter": f"Q{idx}"}  # 默认兜底值
-                    if date_col:
-                        date_raw = row.get(date_col)
-                        if date_raw and str(date_raw).strip() and str(date_raw) != "nan":
-                            date_str = str(date_raw).replace("-", "").replace("/", "")[:8]
-                            if date_str:
-                                entry["quarter"] = date_str
-                    for hk_col, key in _HK_FIN_MAP.items():
-                        if hk_col in df.columns:
-                            val = _safe_float(row[hk_col])
-                            if val is not None:
-                                entry[key] = val
-                                if key not in result:
-                                    result[key] = val
-                    # 只要有财务数据就加入
-                    if len(entry) > 1:
-                        history.append(entry)
+            df = df.sort_values("REPORT_DATE")
 
-                if history:
-                    result["history"] = history
-                    result["quarters"] = [h.get("quarter", f"Q{i}") for i, h in enumerate(history)]
-                    result["latest_quarter"] = result["quarters"][-1]
-                    for key in history[-1]:
-                        if key not in ("quarter",):
-                            result[key] = history[-1][key]
+            history = []
+            for _, row in df.iterrows():
+                date_str = str(row["REPORT_DATE"])[:10].replace("-", "")
+                entry = {"quarter": date_str}
+
+                for col, key in _HK_ANALYSIS_MAP.items():
+                    if col in df.columns:
+                        val = _safe_float(row[col])
+                        if val is not None:
+                            entry[key] = val
+                            if key not in result:
+                                result[key] = val
+
+                if len(entry) > 1:
+                    history.append(entry)
+
+            if history:
+                result["history"] = history
+                result["quarters"] = [h["quarter"] for h in history]
+                result["latest_quarter"] = result["quarters"][-1]
+                for key in history[-1]:
+                    if key != "quarter":
+                        result[key] = history[-1][key]
         except Exception as e:
             result["error"] = str(e)
 
@@ -463,25 +473,39 @@ def get_stock_info(code: str, market: str = None) -> dict:
                 info["name"] = profile["name"]
             if profile.get("industry"):
                 info["industry"] = profile["industry"]
-            if profile.get("total_shares"):
-                info["total_shares"] = profile["total_shares"]
-                # 总市值 = 总股本(股) × 最新价，API 返回的是"股"为单位的字符串
-                price = info.get("latest_price")
-                shares_str = profile["total_shares"]
-                try:
-                    shares_num = float(str(shares_str).replace(",", ""))
-                    if price and shares_num > 0:
-                        total_cap = price * shares_num
-                        if total_cap >= 1e12:
-                            info["total_market_cap"] = f"{(total_cap / 1e12):.2f}万亿"
-                        elif total_cap >= 1e8:
-                            info["total_market_cap"] = f"{(total_cap / 1e8):.2f}亿"
-                        else:
-                            info["total_market_cap"] = f"{(total_cap / 1e4):.2f}万"
-                except (ValueError, TypeError):
-                    pass
             if profile.get("listed_date"):
                 info["listed_date"] = profile["listed_date"]
+
+        # 财务指标API：获取总股本，并在行情不可用时反推最新价
+        df_ind = None
+        try:
+            df_ind = ak.stock_hk_financial_indicator_em(symbol=code)
+        except Exception:
+            pass
+
+        if df_ind is not None and not df_ind.empty:
+            # 总股本（公司概况API无此字段）
+            shares_val = _safe_float(df_ind.iloc[0].get("已发行股本(股)"))
+            if shares_val and shares_val > 0:
+                info["total_shares"] = shares_val
+
+            # 行情不可用时从PE×EPS反推最新价
+            if info.get("latest_price") is None:
+                eps_val = _safe_float(df_ind.iloc[0].get("基本每股收益(元)"))
+                pe_val = _safe_float(df_ind.iloc[0].get("市盈率"))
+                if eps_val and pe_val and eps_val > 0 and pe_val:
+                    info["latest_price"] = round(eps_val * pe_val, 2)
+
+            # 有股价时计算市值
+            price = info.get("latest_price")
+            if price and shares_val and shares_val > 0:
+                total_cap = price * shares_val
+                if total_cap >= 1e12:
+                    info["total_market_cap"] = f"{(total_cap / 1e12):.2f}万亿"
+                elif total_cap >= 1e8:
+                    info["total_market_cap"] = f"{(total_cap / 1e8):.2f}亿"
+                else:
+                    info["total_market_cap"] = f"{(total_cap / 1e4):.2f}万"
 
     return info
 
