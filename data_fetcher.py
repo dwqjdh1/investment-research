@@ -75,14 +75,9 @@ def _get_hk_spot():
 
 
 def _resolve_hk_name(code: str) -> str | None:
-    """通过个股查询解析港股名称"""
-    try:
-        df = ak.stock_hk_company_profile_em(symbol=code)
-        if not df.empty:
-            return str(df.iloc[0]["公司名称"])
-    except Exception:
-        pass
-    return None
+    """通过个股查询解析港股名称（复用概况缓存）"""
+    profile = _get_hk_profile(code)
+    return profile.get("name") if profile else None
 
 
 def search_stock(keyword: str) -> list[dict]:
@@ -200,6 +195,64 @@ _FIN_MAP = {
     "摊薄每股净资产_期末数": "bps_tanbo",
 }
 
+_HK_FIN_MAP = {
+    "营业总收入(元)": "revenue",
+    "营业总收入": "revenue",
+    "营业成本(元)": "cost",
+    "营业成本": "cost",
+    "净利润(元)": "net_profit",
+    "净利润": "net_profit",
+    "基本每股收益(元)": "eps",
+    "基本每股收益": "eps",
+    "每股净资产(元)": "bps",
+    "每股净资产": "bps",
+    "净资产收益率": "roe",
+    "净资产收益率(%)": "roe",
+    "总资产收益率": "roa",
+    "总资产收益率(%)": "roa",
+    "毛利率": "gross_margin",
+    "毛利率(%)": "gross_margin",
+    "净利率": "net_margin",
+    "净利率(%)": "net_margin",
+    "资产负债率": "debt_ratio",
+    "资产负债率(%)": "debt_ratio",
+    "每股现金流(元)": "cfps",
+    "每股现金流": "cfps",
+    "每股营业收入(元)": "revenue_per_share",
+    "每股营业收入": "revenue_per_share",
+}
+
+_profile_hk_cache = {}
+_profile_hk_time = 0
+
+
+def _get_hk_profile(code: str) -> dict:
+    """获取港股公司概况（含行业等信息）"""
+    global _profile_hk_cache, _profile_hk_time
+    now = datetime.now().timestamp()
+    cache_key = f"profile_{code}"
+    if cache_key in _profile_hk_cache and (now - _profile_hk_time) < _CACHE_TTL:
+        return _profile_hk_cache.get(cache_key, {})
+    try:
+        df = ak.stock_hk_company_profile_em(symbol=code)
+        if not df.empty:
+            row = df.iloc[0]
+            profile = {
+                "name": str(row.get("公司名称", "")),
+                "industry": str(row.get("所属行业", "")) if row.get("所属行业") else "",
+                "total_shares": str(row.get("总股本", "")) if row.get("总股本") else "",
+                "business": str(row.get("主营业务", "")) if row.get("主营业务") else "",
+                "listed_date": str(row.get("上市日期", "")) if row.get("上市日期") else "",
+            }
+            _profile_hk_cache[cache_key] = profile
+            _profile_hk_time = now
+            return profile
+    except Exception:
+        pass
+    _profile_hk_cache[cache_key] = {}
+    _profile_hk_time = now
+    return {}
+
 
 def get_financial_data(code: str, market: str = None) -> dict:
     """获取财务摘要数据"""
@@ -257,11 +310,37 @@ def get_financial_data(code: str, market: str = None) -> dict:
         try:
             df = ak.stock_hk_financial_indicator_em(symbol=code)
             if not df.empty:
-                result["eps"] = _safe_float(df.iloc[0].get("基本每股收益(元)"))
-                result["bps"] = _safe_float(df.iloc[0].get("每股净资产(元)"))
-                result["net_profit"] = _safe_float(df.iloc[0].get("净利润(元)"))
-                result["revenue"] = _safe_float(df.iloc[0].get("营业总收入(元)"))
-                result["roe"] = _safe_float(df.iloc[0].get("净资产收益率"))
+                # 按日期排序
+                if "日期" in df.columns:
+                    df = df.sort_values("日期")
+
+                history = []
+                for _, row in df.iterrows():
+                    entry = {}
+                    date_raw = row.get("日期", "")
+                    if date_raw:
+                        # 日期格式可能是 2024-12-31 或 20241231，统一到 YYYYMMDD
+                        date_str = str(date_raw).replace("-", "").replace("/", "")[:8]
+                        entry["quarter"] = date_str
+                    for hk_col, key in _HK_FIN_MAP.items():
+                        if hk_col in df.columns:
+                            val = _safe_float(row[hk_col])
+                            if val is not None:
+                                entry[key] = val
+                                # 最新日期的值覆盖到顶层
+                                if key not in result:
+                                    result[key] = val
+                    if entry:
+                        history.append(entry)
+
+                if history:
+                    result["history"] = history
+                    result["quarters"] = [h.get("quarter", "") for h in history]
+                    result["latest_quarter"] = result["quarters"][-1]
+                    # 确保最新值是最新季度的
+                    for key in history[-1]:
+                        if key not in ("quarter",):
+                            result[key] = history[-1][key]
         except Exception as e:
             result["error"] = str(e)
 
@@ -329,6 +408,12 @@ def get_stock_info(code: str, market: str = None) -> dict:
                     info["name"] = str(r["名称"])
                     info["latest_price"] = _safe_float(r.get("最新价"))
                     info["change_pct"] = _safe_float(r.get("涨跌幅"))
+                    info["high"] = _safe_float(r.get("最高"))
+                    info["low"] = _safe_float(r.get("最低"))
+                    info["open"] = _safe_float(r.get("今开"))
+                    info["pre_close"] = _safe_float(r.get("昨收"))
+                    info["volume"] = _safe_float(r.get("成交量"))
+                    info["turnover"] = _safe_float(r.get("成交额"))
             else:
                 name = _resolve_hk_name(code)
                 if name:
@@ -338,6 +423,33 @@ def get_stock_info(code: str, market: str = None) -> dict:
             name = _resolve_hk_name(code)
             if name:
                 info["name"] = name
+
+        # 公司概况（行业、股本等）
+        profile = _get_hk_profile(code)
+        if profile:
+            if not info.get("name") and profile.get("name"):
+                info["name"] = profile["name"]
+            if profile.get("industry"):
+                info["industry"] = profile["industry"]
+            if profile.get("total_shares"):
+                info["total_shares"] = profile["total_shares"]
+                # 总市值 = 总股本(股) × 最新价，API 返回的是"股"为单位的字符串
+                price = info.get("latest_price")
+                shares_str = profile["total_shares"]
+                try:
+                    shares_num = float(str(shares_str).replace(",", ""))
+                    if price and shares_num > 0:
+                        total_cap = price * shares_num
+                        if total_cap >= 1e12:
+                            info["total_market_cap"] = f"{(total_cap / 1e12):.2f}万亿"
+                        elif total_cap >= 1e8:
+                            info["total_market_cap"] = f"{(total_cap / 1e8):.2f}亿"
+                        else:
+                            info["total_market_cap"] = f"{(total_cap / 1e4):.2f}万"
+                except (ValueError, TypeError):
+                    pass
+            if profile.get("listed_date"):
+                info["listed_date"] = profile["listed_date"]
 
     return info
 
