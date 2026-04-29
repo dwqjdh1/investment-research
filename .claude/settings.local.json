@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from app import build_ui; demo = build_ui\\(\\); print\\('OK - no warnings'\\)\")",
+      "Bash(python -c \"from app import build_ui; demo = build_ui\\(\\); print\\('OK'\\)\")",
+      "Bash(netstat -ano)",
+      "Bash(taskkill *)",
+      "Bash(cmd *)",
+      "Bash(python -c \"from app import build_ui; d = build_ui\\(\\); print\\('Build OK'\\)\")",
+      "Bash(python -c \"from app import build_ui; d = build_ui\\(\\); print\\('OK'\\)\")",
+      "Bash(python app.py)",
+      "Bash(python -c \"import app; print\\('Import OK'\\)\")",
+      "Bash(python -c \"from app import build_ui; build_ui\\(\\); print\\('OK'\\)\")",
+      "Bash(python -c \"from app import build_ui; build_ui\\(\\); print\\('Build OK'\\)\")"
+    ]
+  }
+}

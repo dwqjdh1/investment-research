@@ -1,0 +1,455 @@
+import akshare as ak
+import pandas as pd
+from datetime import datetime
+from functools import lru_cache
+
+MARKET_A = "a_share"
+MARKET_HK = "hk_share"
+
+# 全市场数据缓存（只加载一次，5分钟内复用）
+_CACHE_TTL = 300  # 秒
+
+
+def _a_code_with_prefix(code: str) -> str:
+    code = code.strip()
+    if code.startswith(("sh", "sz", "bj")):
+        return code
+    if code.startswith(("60", "68")):
+        return f"sh{code}"
+    return f"sz{code}"
+
+
+def detect_market(code: str) -> str:
+    code = code.strip()
+    if code.isdigit() and len(code) == 6:
+        return MARKET_A
+    if code.isdigit() and len(code) == 5:
+        return MARKET_HK
+    return MARKET_A
+
+
+def normalize_hk_code(code: str) -> str:
+    code = code.strip()
+    if code.isdigit() and len(code) < 5:
+        code = code.zfill(5)
+    return code
+
+
+# ── 缓存 ──
+_spot_a_cache = None
+_spot_a_time = 0
+_spot_hk_cache = None
+_spot_hk_time = 0
+
+
+def _get_a_spot():
+    global _spot_a_cache, _spot_a_time
+    now = datetime.now().timestamp()
+    if _spot_a_cache is not None and (now - _spot_a_time) < _CACHE_TTL:
+        return _spot_a_cache
+    df = ak.stock_zh_a_spot()
+    # 提取纯数字代码列
+    df["code_raw"] = df["代码"].astype(str).apply(
+        lambda c: c[2:] if c.startswith(("sh", "sz", "bj")) else c
+    )
+    _spot_a_cache = df
+    _spot_a_time = now
+    return df
+
+
+def _get_hk_spot():
+    """获取港股全列表（网络不稳定时返回空DataFrame）"""
+    global _spot_hk_cache, _spot_hk_time
+    now = datetime.now().timestamp()
+    if _spot_hk_cache is not None and (now - _spot_hk_time) < _CACHE_TTL:
+        return _spot_hk_cache
+    try:
+        df = ak.stock_hk_spot_em()
+        _spot_hk_cache = df
+        _spot_hk_time = now
+        return df
+    except Exception:
+        _spot_hk_cache = pd.DataFrame()
+        _spot_hk_time = now
+        return _spot_hk_cache
+
+
+def _resolve_hk_name(code: str) -> str | None:
+    """通过个股查询解析港股名称"""
+    try:
+        df = ak.stock_hk_company_profile_em(symbol=code)
+        if not df.empty:
+            return str(df.iloc[0]["公司名称"])
+    except Exception:
+        pass
+    return None
+
+
+def search_stock(keyword: str) -> list[dict]:
+    """搜索股票（带缓存，快速响应）"""
+    keyword = keyword.strip()
+    if not keyword:
+        return []
+
+    results = []
+
+    # 纯数字 → 先搜代码，再搜名称
+    is_digit = keyword.isdigit()
+
+    # A股搜索
+    try:
+        df_a = _get_a_spot()
+        if is_digit:
+            mask = df_a["code_raw"].str.contains(keyword)
+        else:
+            mask = df_a["名称"].astype(str).str.contains(keyword, case=False)
+        for _, row in df_a[mask].head(10).iterrows():
+            results.append({
+                "code": str(row["code_raw"]),
+                "name": str(row["名称"]),
+                "market": MARKET_A,
+                "market_label": "A股",
+            })
+    except Exception:
+        pass
+
+    # 港股搜索（全列表网络不稳时 fallback 到个股查询）
+    try:
+        df_hk = _get_hk_spot()
+        if not df_hk.empty:
+            if is_digit:
+                kw = normalize_hk_code(keyword)
+                mask = df_hk["代码"].astype(str).str.contains(kw)
+            else:
+                mask = df_hk["名称"].astype(str).str.contains(keyword, case=False)
+            for _, row in df_hk[mask].head(10).iterrows():
+                results.append({
+                    "code": str(row["代码"]),
+                    "name": str(row["名称"]),
+                    "market": MARKET_HK,
+                    "market_label": "港股",
+                })
+        elif is_digit and len(keyword) <= 5:
+            kw = normalize_hk_code(keyword)
+            name = _resolve_hk_name(kw)
+            if name:
+                results.append({
+                    "code": kw, "name": name,
+                    "market": MARKET_HK, "market_label": "港股",
+                })
+    except Exception:
+        pass
+
+    return results
+
+
+def quick_resolve(keyword: str) -> dict | None:
+    """快速解析：如果输入看起来像股票代码，直接返回股票信息跳过搜索"""
+    keyword = keyword.strip()
+    if not keyword:
+        return None
+
+    # A股6位代码 → 直接查行情
+    if keyword.isdigit() and len(keyword) == 6:
+        try:
+            df = _get_a_spot()
+            row = df[df["code_raw"] == keyword]
+            if not row.empty:
+                r = row.iloc[0]
+                return {
+                    "code": keyword,
+                    "name": str(r["名称"]),
+                    "market": MARKET_A,
+                    "market_label": "A股",
+                }
+        except Exception:
+            pass
+
+    # 港股5位代码
+    if keyword.isdigit() and len(keyword) == 5:
+        kw = normalize_hk_code(keyword)
+        name = _resolve_hk_name(kw)
+        if name:
+            return {
+                "code": kw, "name": name,
+                "market": MARKET_HK, "market_label": "港股",
+            }
+
+    return None
+
+
+# ── 指标名称映射 ──
+_FIN_MAP = {
+    "母公司净利润": "net_profit_parent",
+    "营业总收入": "revenue",
+    "营业成本": "cost",
+    "净利润": "net_profit",
+    "扣非净利润": "net_profit_deduct",
+    "股东权益合计(净资产)": "equity",
+    "经营现金流量净额": "operating_cf",
+    "基本每股收益": "eps",
+    "稀释每股收益": "eps_diluted",
+    "每股净资产": "bps",
+    "每股现金流": "cfps",
+    "净资产收益率(ROE)": "roe",
+    "总资产收益率(ROA)": "roa",
+    "毛利率": "gross_margin",
+    "销售净利率": "net_margin",
+    "期间费用率": "expense_ratio",
+    "资产负债率": "debt_ratio",
+    "摊薄每股净资产_期末数": "bps_tanbo",
+}
+
+
+def get_financial_data(code: str, market: str = None) -> dict:
+    """获取财务摘要数据"""
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+    result = {"quarters": [], "indicators": {}}
+
+    if market == MARKET_A:
+        try:
+            df = ak.stock_financial_abstract(symbol=code)
+            if df.empty:
+                result["error"] = "无财务数据"
+                return result
+
+            date_cols = [c for c in df.columns[2:] if str(c).isdigit() and len(str(c)) == 8]
+            if not date_cols:
+                result["error"] = "无有效日期列"
+                return result
+
+            for _, row in df.iterrows():
+                indicator_name = str(row["指标"]).strip()
+                key = _FIN_MAP.get(indicator_name)
+                if key is None:
+                    continue
+                series = {}
+                for dc in date_cols:
+                    val = _safe_float(row[dc])
+                    if val is not None:
+                        series[str(dc)] = val
+                if series:
+                    result["indicators"][key] = series
+
+            result["quarters"] = sorted(date_cols, reverse=True)
+            result["latest_quarter"] = result["quarters"][0] if result["quarters"] else ""
+
+            latest = result["latest_quarter"]
+            for k, series in result["indicators"].items():
+                if latest in series:
+                    result[k] = series[latest]
+
+            history = []
+            for q in result["quarters"][:8]:
+                entry = {"quarter": q}
+                for k, series in result["indicators"].items():
+                    entry[k] = series.get(q)
+                history.append(entry)
+            result["history"] = history
+
+        except Exception as e:
+            result["error"] = str(e)
+
+    elif market == MARKET_HK:
+        code = normalize_hk_code(code)
+        try:
+            df = ak.stock_hk_financial_indicator_em(symbol=code)
+            if not df.empty:
+                result["eps"] = _safe_float(df.iloc[0].get("基本每股收益(元)"))
+                result["bps"] = _safe_float(df.iloc[0].get("每股净资产(元)"))
+                result["net_profit"] = _safe_float(df.iloc[0].get("净利润(元)"))
+                result["revenue"] = _safe_float(df.iloc[0].get("营业总收入(元)"))
+                result["roe"] = _safe_float(df.iloc[0].get("净资产收益率"))
+        except Exception as e:
+            result["error"] = str(e)
+
+    return result
+
+
+def get_stock_info(code: str, market: str = None) -> dict:
+    """获取基本信息 + 实时行情"""
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+    info = {"code": code, "market": market}
+
+    if market == MARKET_A:
+        # 行情
+        try:
+            df_spot = _get_a_spot()
+            prefixed = _a_code_with_prefix(code)
+            row = df_spot[df_spot["代码"].astype(str) == prefixed]
+            if not row.empty:
+                r = row.iloc[0]
+                info["name"] = str(r["名称"])
+                info["latest_price"] = _safe_float(r.get("最新价"))
+                info["change_pct"] = _safe_float(r.get("涨跌幅"))
+                info["volume"] = _safe_float(r.get("成交量"))
+                info["turnover"] = _safe_float(r.get("成交额"))
+                info["high"] = _safe_float(r.get("最高"))
+                info["low"] = _safe_float(r.get("最低"))
+                info["open"] = _safe_float(r.get("今开"))
+                info["pre_close"] = _safe_float(r.get("昨收"))
+        except Exception as e:
+            info["error_spot"] = str(e)
+
+        # 行业/市值（东方财富，不稳定时可跳过）
+        try:
+            df = ak.stock_individual_info_em(symbol=code)
+            for _, row in df.iterrows():
+                key = str(row["item"])
+                val = str(row["value"])
+                if key == "股票简称" and not info.get("name"):
+                    info["name"] = val
+                elif key == "行业":
+                    info["industry"] = val
+                elif key == "上市时间":
+                    info["listed_date"] = val
+                elif key == "总股本":
+                    info["total_shares"] = val
+                elif key == "总市值":
+                    info["total_market_cap"] = val
+                elif key == "流通市值":
+                    info["float_market_cap"] = val
+        except Exception:
+            pass
+
+    elif market == MARKET_HK:
+        code = normalize_hk_code(code)
+        info["code"] = code
+        # 先尝全列表，不行则个股查询
+        try:
+            df_spot = _get_hk_spot()
+            if not df_spot.empty:
+                row = df_spot[df_spot["代码"].astype(str) == code]
+                if not row.empty:
+                    r = row.iloc[0]
+                    info["name"] = str(r["名称"])
+                    info["latest_price"] = _safe_float(r.get("最新价"))
+                    info["change_pct"] = _safe_float(r.get("涨跌幅"))
+            else:
+                name = _resolve_hk_name(code)
+                if name:
+                    info["name"] = name
+        except Exception as e:
+            info["error_spot"] = str(e)
+            name = _resolve_hk_name(code)
+            if name:
+                info["name"] = name
+
+    return info
+
+
+def get_price_history(code: str, market: str = None) -> dict:
+    """获取历史价格"""
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+    prices = {}
+
+    if market == MARKET_A:
+        try:
+            prefixed = _a_code_with_prefix(code)
+            df = ak.stock_zh_a_hist_tx(
+                symbol=prefixed,
+                start_date="20180101",
+                end_date=datetime.now().strftime("%Y%m%d"),
+                adjust="qfq",
+            )
+            if not df.empty:
+                date_col = "date" if "date" in df.columns else "日期"
+                close_col = "close" if "close" in df.columns else "收盘"
+                open_col = "open" if "open" in df.columns else "开盘"
+                high_col = "high" if "high" in df.columns else "最高"
+                low_col = "low" if "low" in df.columns else "最低"
+                vol_col = "amount" if "amount" in df.columns else ("volume" if "volume" in df.columns else "成交量")
+                df = df.sort_values(date_col)
+                prices["dates"] = df[date_col].astype(str).tolist()
+                prices["close"] = df[close_col].tolist()
+                prices["open"] = df[open_col].tolist()
+                prices["high"] = df[high_col].tolist()
+                prices["low"] = df[low_col].tolist()
+                prices["volume"] = df[vol_col].tolist()
+        except Exception as e:
+            prices["error"] = str(e)
+
+    elif market == MARKET_HK:
+        code = normalize_hk_code(code)
+        try:
+            df = ak.stock_hk_hist(symbol=code, period="daily", start_date="20180101",
+                                  end_date=datetime.now().strftime("%Y%m%d"), adjust="qfq")
+            if not df.empty:
+                df = df.sort_values("日期")
+                prices["dates"] = df["日期"].astype(str).tolist()
+                prices["close"] = df["收盘"].tolist()
+                prices["open"] = df["开盘"].tolist()
+                prices["high"] = df["最高"].tolist()
+                prices["low"] = df["最低"].tolist()
+                prices["volume"] = df["成交量"].tolist()
+        except Exception as e:
+            prices["error"] = str(e)
+
+    return prices
+
+
+def compute_valuation(info: dict, financial: dict, prices: dict) -> dict:
+    val = {}
+    price = info.get("latest_price")
+    eps = financial.get("eps")
+    bps = financial.get("bps")
+
+    if price and eps and eps > 0:
+        val["pe_current"] = round(price / eps, 2)
+    if price and bps and bps > 0:
+        val["pb_current"] = round(price / bps, 2)
+
+    closes = prices.get("close", [])
+    if closes:
+        if len(closes) >= 22:
+            val["change_1m"] = round((closes[-1] / closes[-22] - 1) * 100, 2)
+        if len(closes) >= 66:
+            val["change_3m"] = round((closes[-1] / closes[-66] - 1) * 100, 2)
+        if len(closes) >= 250:
+            val["change_1y"] = round((closes[-1] / closes[-250] - 1) * 100, 2)
+
+        closes_1y = closes[-250:] if len(closes) >= 250 else closes
+        val["price_latest"] = closes[-1]
+        val["price_high_1y"] = round(max(closes_1y), 2)
+        val["price_low_1y"] = round(min(closes_1y), 2)
+        val["price_history"] = closes[-250:]
+        val["price_dates"] = (prices.get("dates") or [])[-250:]
+
+    return val
+
+
+def fetch_all_data(code: str, market: str = None) -> dict:
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+
+    info = get_stock_info(code, market)
+    financial = get_financial_data(code, market)
+    prices = get_price_history(code, market)
+    valuation = compute_valuation(info, financial, prices)
+
+    return {
+        "code": code,
+        "market": market,
+        "info": info,
+        "financial": financial,
+        "valuation": valuation,
+        "prices": prices,
+        "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def _safe_float(val) -> float | None:
+    if val is None:
+        return None
+    try:
+        v = float(val)
+        return v if pd.notna(v) else None
+    except (ValueError, TypeError):
+        return None
