@@ -14,6 +14,10 @@ RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua
 # 复制代码
 COPY . .
 
-EXPOSE 7860
+# 非 root 用户运行
+RUN useradd -m -u 1000 appuser && chown -R appuser /app
+USER appuser
 
-CMD ["python", "app.py"]
+EXPOSE 8501
+
+CMD ["streamlit", "run", "app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]

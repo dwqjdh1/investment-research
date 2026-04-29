@@ -3,7 +3,7 @@ services:
     build: .
     container_name: stock-research
     ports:
-      - "7860:7860"
+      - "8501:8501"
     env_file:
       - .env
     restart: unless-stopped

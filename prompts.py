@@ -1,8 +1,6 @@
 SYSTEM_PROMPT = """你是一位资深的股票分析师。分析风格：客观中立、基于数据、语言精炼、要点突出。报告使用 Markdown 格式。"""
 
-COMPREHENSIVE_REPORT_PROMPT = """{system_prompt}
-
-请为 **{stock_name}**（{stock_code}）撰写投资研报。基于以下数据，不要编造。
+COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写投资研报。基于以下数据，不要编造。
 
 ## 基本信息
 {basic_info}

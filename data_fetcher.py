@@ -1,8 +1,7 @@
 import akshare as ak
 import pandas as pd
 from datetime import datetime
-from functools import lru_cache
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 
 MARKET_A = "a_share"
 MARKET_HK = "hk_share"

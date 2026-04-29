@@ -1,4 +1,3 @@
-import os
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -120,22 +119,41 @@ def create_valuation_gauge(valuation: dict, stock_name: str) -> go.Figure:
         return fig
 
     fig = go.Figure()
-    fig.add_trace(go.Indicator(
-        mode="number",
-        value=pe if pe is not None else 0,
-        title={"text": f"{stock_name}", "font": {"size": 16, "color": "#64748b"}},
-        number={"suffix": " 倍 (PE)", "font": {"size": 40, "color": COLORS["primary"], "family": "Inter"}},
-    ))
+
+    if pe is not None:
+        fig.add_trace(go.Indicator(
+            mode="number",
+            value=pe,
+            title={"text": f"{stock_name}", "font": {"size": 16, "color": "#64748b"}},
+            number={"suffix": " 倍 (PE)", "font": {"size": 40, "color": COLORS["primary"], "family": "Inter"}},
+        ))
+        suffix_parts = []
+        if pb is not None:
+            suffix_parts.append(f"PB = {pb:.2f}倍")
+        if price is not None:
+            suffix_parts.append(f"股价 = {price:.2f}元")
+        if suffix_parts:
+            fig.add_annotation(
+                text="  |  ".join(suffix_parts),
+                xref="paper", yref="paper", x=0.5, y=-0.08, showarrow=False,
+                font=dict(size=13, color=COLORS["text_light"]),
+            )
+    elif pb is not None:
+        fig.add_trace(go.Indicator(
+            mode="number",
+            value=pb,
+            title={"text": f"{stock_name}", "font": {"size": 16, "color": "#64748b"}},
+            number={"suffix": " 倍 (PB)", "font": {"size": 40, "color": COLORS["secondary"], "family": "Inter"}},
+        ))
+        if price is not None:
+            fig.add_annotation(
+                text=f"股价 = {price:.2f}元  |  PE 暂无数据",
+                xref="paper", yref="paper", x=0.5, y=-0.08, showarrow=False,
+                font=dict(size=13, color=COLORS["text_light"]),
+            )
 
     fig.update_layout(**COMMON_LAYOUT)
     fig.update_layout(margin=dict(l=40, r=40, t=70, b=50))
-
-    if pb is not None:
-        fig.add_annotation(
-            text=f"PB = {pb:.2f}倍  |  股价 = {price:.2f}元" if price else f"PB = {pb:.2f}倍",
-            xref="paper", yref="paper", x=0.5, y=-0.08, showarrow=False,
-            font=dict(size=13, color=COLORS["text_light"]),
-        )
     return fig
 
 

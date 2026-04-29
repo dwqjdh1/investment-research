@@ -78,7 +78,6 @@ class ReportGenerator:
     def generate(self, data: dict) -> tuple[str, str]:
         name = (data.get("info") or {}).get("name") or data.get("code", "未知")
         prompt = COMPREHENSIVE_REPORT_PROMPT.format(
-            system_prompt=SYSTEM_PROMPT,
             stock_name=name,
             stock_code=data.get("code", ""),
             basic_info=_format_basic_info(data.get("info", {})),
