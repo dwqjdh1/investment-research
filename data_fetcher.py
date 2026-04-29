@@ -2,12 +2,15 @@ import akshare as ak
 import pandas as pd
 from datetime import datetime
 from functools import lru_cache
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 MARKET_A = "a_share"
 MARKET_HK = "hk_share"
 
 # 全市场数据缓存（只加载一次，5分钟内复用）
 _CACHE_TTL = 300  # 秒
+# 单股数据缓存（价格/财务，5分钟内复用）
+_SINGLE_STOCK_CACHE_TTL = 300  # 秒
 
 
 def _a_code_with_prefix(code: str) -> str:
@@ -40,6 +43,13 @@ _spot_a_cache = None
 _spot_a_time = 0
 _spot_hk_cache = None
 _spot_hk_time = 0
+
+
+def _peek_a_spot_cache():
+    """返回全市场缓存（若已就绪），不触发下载"""
+    if _spot_a_cache is not None and (datetime.now().timestamp() - _spot_a_time) < _CACHE_TTL:
+        return _spot_a_cache
+    return None
 
 
 def _get_a_spot():
@@ -225,6 +235,10 @@ _HK_FIN_MAP = {
 _profile_hk_cache = {}
 _profile_hk_time = 0
 
+# 单股数据缓存（价格/财务）
+_price_cache: dict[str, tuple[dict, float]] = {}
+_financial_cache: dict[str, tuple[dict, float]] = {}
+
 
 def _get_hk_profile(code: str) -> dict:
     """获取港股公司概况（含行业等信息）"""
@@ -254,11 +268,8 @@ def _get_hk_profile(code: str) -> dict:
     return {}
 
 
-def get_financial_data(code: str, market: str = None) -> dict:
-    """获取财务摘要数据"""
-    code = code.strip()
-    if market is None:
-        market = detect_market(code)
+def _get_financial_data_impl(code: str, market: str) -> dict:
+    """获取财务摘要数据（内部实现，无缓存）"""
     result = {"quarters": [], "indicators": {}}
 
     if market == MARKET_A:
@@ -352,6 +363,22 @@ def get_financial_data(code: str, market: str = None) -> dict:
     return result
 
 
+def get_financial_data(code: str, market: str = None) -> dict:
+    """获取财务摘要数据（带缓存）"""
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+    cache_key = f"{market}_{code}"
+    now = datetime.now().timestamp()
+    if cache_key in _financial_cache:
+        cached, ts = _financial_cache[cache_key]
+        if (now - ts) < _SINGLE_STOCK_CACHE_TTL:
+            return cached
+    result = _get_financial_data_impl(code, market)
+    _financial_cache[cache_key] = (result, now)
+    return result
+
+
 def get_stock_info(code: str, market: str = None) -> dict:
     """获取基本信息 + 实时行情"""
     code = code.strip()
@@ -360,22 +387,23 @@ def get_stock_info(code: str, market: str = None) -> dict:
     info = {"code": code, "market": market}
 
     if market == MARKET_A:
-        # 行情
+        # 行情：只在缓存已就绪时使用，不主动触发全市场下载
         try:
-            df_spot = _get_a_spot()
-            prefixed = _a_code_with_prefix(code)
-            row = df_spot[df_spot["代码"].astype(str) == prefixed]
-            if not row.empty:
-                r = row.iloc[0]
-                info["name"] = str(r["名称"])
-                info["latest_price"] = _safe_float(r.get("最新价"))
-                info["change_pct"] = _safe_float(r.get("涨跌幅"))
-                info["volume"] = _safe_float(r.get("成交量"))
-                info["turnover"] = _safe_float(r.get("成交额"))
-                info["high"] = _safe_float(r.get("最高"))
-                info["low"] = _safe_float(r.get("最低"))
-                info["open"] = _safe_float(r.get("今开"))
-                info["pre_close"] = _safe_float(r.get("昨收"))
+            df_spot = _peek_a_spot_cache()
+            if df_spot is not None:
+                prefixed = _a_code_with_prefix(code)
+                row = df_spot[df_spot["代码"].astype(str) == prefixed]
+                if not row.empty:
+                    r = row.iloc[0]
+                    info["name"] = str(r["名称"])
+                    info["latest_price"] = _safe_float(r.get("最新价"))
+                    info["change_pct"] = _safe_float(r.get("涨跌幅"))
+                    info["volume"] = _safe_float(r.get("成交量"))
+                    info["turnover"] = _safe_float(r.get("成交额"))
+                    info["high"] = _safe_float(r.get("最高"))
+                    info["low"] = _safe_float(r.get("最低"))
+                    info["open"] = _safe_float(r.get("今开"))
+                    info["pre_close"] = _safe_float(r.get("昨收"))
         except Exception as e:
             info["error_spot"] = str(e)
 
@@ -459,11 +487,8 @@ def get_stock_info(code: str, market: str = None) -> dict:
     return info
 
 
-def get_price_history(code: str, market: str = None) -> dict:
-    """获取历史价格"""
-    code = code.strip()
-    if market is None:
-        market = detect_market(code)
+def _get_price_history_impl(code: str, market: str) -> dict:
+    """获取历史价格（内部实现，无缓存）"""
     prices = {}
 
     if market == MARKET_A:
@@ -471,7 +496,7 @@ def get_price_history(code: str, market: str = None) -> dict:
             prefixed = _a_code_with_prefix(code)
             df = ak.stock_zh_a_hist_tx(
                 symbol=prefixed,
-                start_date="20180101",
+                start_date="20240101",
                 end_date=datetime.now().strftime("%Y%m%d"),
                 adjust="qfq",
             )
@@ -495,7 +520,7 @@ def get_price_history(code: str, market: str = None) -> dict:
     elif market == MARKET_HK:
         code = normalize_hk_code(code)
         try:
-            df = ak.stock_hk_hist(symbol=code, period="daily", start_date="20180101",
+            df = ak.stock_hk_hist(symbol=code, period="daily", start_date="20240101",
                                   end_date=datetime.now().strftime("%Y%m%d"), adjust="qfq")
             if not df.empty:
                 df = df.sort_values("日期")
@@ -509,6 +534,22 @@ def get_price_history(code: str, market: str = None) -> dict:
             prices["error"] = str(e)
 
     return prices
+
+
+def get_price_history(code: str, market: str = None) -> dict:
+    """获取历史价格（带缓存）"""
+    code = code.strip()
+    if market is None:
+        market = detect_market(code)
+    cache_key = f"{market}_{code}"
+    now = datetime.now().timestamp()
+    if cache_key in _price_cache:
+        cached, ts = _price_cache[cache_key]
+        if (now - ts) < _SINGLE_STOCK_CACHE_TTL:
+            return cached
+    result = _get_price_history_impl(code, market)
+    _price_cache[cache_key] = (result, now)
+    return result
 
 
 def compute_valuation(info: dict, financial: dict, prices: dict) -> dict:
@@ -546,9 +587,15 @@ def fetch_all_data(code: str, market: str = None) -> dict:
     if market is None:
         market = detect_market(code)
 
-    info = get_stock_info(code, market)
-    financial = get_financial_data(code, market)
-    prices = get_price_history(code, market)
+    # 并行获取三个独立数据源
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        f_info = executor.submit(get_stock_info, code, market)
+        f_financial = executor.submit(get_financial_data, code, market)
+        f_prices = executor.submit(get_price_history, code, market)
+        info = f_info.result()
+        financial = f_financial.result()
+        prices = f_prices.result()
+
     valuation = compute_valuation(info, financial, prices)
 
     return {
@@ -560,6 +607,23 @@ def fetch_all_data(code: str, market: str = None) -> dict:
         "prices": prices,
         "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+
+
+def warmup_market_data():
+    """启动时预热全市场数据，使首次搜索/生成快速响应"""
+    import threading
+
+    def _warmup():
+        try:
+            _get_a_spot()
+        except Exception:
+            pass
+        try:
+            _get_hk_spot()
+        except Exception:
+            pass
+
+    threading.Thread(target=_warmup, daemon=True).start()
 
 
 def _safe_float(val) -> float | None:

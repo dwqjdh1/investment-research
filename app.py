@@ -1,5 +1,5 @@
 import gradio as gr
-from data_fetcher import fetch_all_data, detect_market, search_stock, quick_resolve
+from data_fetcher import fetch_all_data, detect_market, search_stock, quick_resolve, warmup_market_data
 from report_generator import ReportGenerator
 from visualizer import (
     create_financial_trend_chart,
@@ -1041,4 +1041,5 @@ def build_ui():
 
 
 if __name__ == "__main__":
+    warmup_market_data()
     build_ui().launch(server_name="0.0.0.0", server_port=7860, share=False, css=_CSS)
