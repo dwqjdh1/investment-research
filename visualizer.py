@@ -127,7 +127,8 @@ def create_valuation_gauge(valuation: dict, stock_name: str) -> go.Figure:
         number={"suffix": " 倍 (PE)", "font": {"size": 40, "color": COLORS["primary"], "family": "Inter"}},
     ))
 
-    fig.update_layout(**COMMON_LAYOUT, margin=dict(l=40, r=40, t=70, b=50))
+    fig.update_layout(**COMMON_LAYOUT)
+    fig.update_layout(margin=dict(l=40, r=40, t=70, b=50))
 
     if pb is not None:
         fig.add_annotation(
