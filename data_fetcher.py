@@ -310,34 +310,39 @@ def get_financial_data(code: str, market: str = None) -> dict:
         try:
             df = ak.stock_hk_financial_indicator_em(symbol=code)
             if not df.empty:
-                # 按日期排序
-                if "日期" in df.columns:
-                    df = df.sort_values("日期")
+                # 查找日期列（AKShare不同版本列名可能不同）
+                date_col = None
+                for candidate in ("日期", "报告期", "报告日期", "截止日期", "财报周期"):
+                    if candidate in df.columns:
+                        date_col = candidate
+                        break
+                if date_col:
+                    df = df.sort_values(date_col)
 
                 history = []
-                for _, row in df.iterrows():
-                    entry = {}
-                    date_raw = row.get("日期", "")
-                    if date_raw:
-                        # 日期格式可能是 2024-12-31 或 20241231，统一到 YYYYMMDD
-                        date_str = str(date_raw).replace("-", "").replace("/", "")[:8]
-                        entry["quarter"] = date_str
+                for idx, (_, row) in enumerate(df.iterrows()):
+                    entry = {"quarter": f"Q{idx}"}  # 默认兜底值
+                    if date_col:
+                        date_raw = row.get(date_col)
+                        if date_raw and str(date_raw).strip() and str(date_raw) != "nan":
+                            date_str = str(date_raw).replace("-", "").replace("/", "")[:8]
+                            if date_str:
+                                entry["quarter"] = date_str
                     for hk_col, key in _HK_FIN_MAP.items():
                         if hk_col in df.columns:
                             val = _safe_float(row[hk_col])
                             if val is not None:
                                 entry[key] = val
-                                # 最新日期的值覆盖到顶层
                                 if key not in result:
                                     result[key] = val
-                    if entry:
+                    # 只要有财务数据就加入
+                    if len(entry) > 1:
                         history.append(entry)
 
                 if history:
                     result["history"] = history
-                    result["quarters"] = [h.get("quarter", "") for h in history]
+                    result["quarters"] = [h.get("quarter", f"Q{i}") for i, h in enumerate(history)]
                     result["latest_quarter"] = result["quarters"][-1]
-                    # 确保最新值是最新季度的
                     for key in history[-1]:
                         if key not in ("quarter",):
                             result[key] = history[-1][key]
