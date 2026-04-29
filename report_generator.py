@@ -40,12 +40,12 @@ def _format_financial_data(financial: dict) -> str:
         if val is not None:
             lines.append(f"- {label}：{val / div:.2f}{unit}")
 
-    # 只保留最近3个季度趋势（削减prompt大小）
+    # 只保留最近1个季度趋势（削减prompt大小）
     history = financial.get("history", [])
     if history:
         lines.append("")
-        lines.append("近3季度趋势：")
-        for h in history[:3]:
+        lines.append("最新季度趋势：")
+        for h in history[:1]:
             parts = [h.get("quarter", "")]
             if h.get("roe") is not None:
                 parts.append(f"ROE={h['roe']:.1f}%")
@@ -89,6 +89,23 @@ class ReportGenerator:
             return report, ""
         except Exception as e:
             return "", f"LLM调用失败：{str(e)}"
+
+    def generate_stream(self, data: dict):
+        """流式生成研报，逐步返回文本块"""
+        name = (data.get("info") or {}).get("name") or data.get("code", "未知")
+        prompt = COMPREHENSIVE_REPORT_PROMPT.format(
+            stock_name=name,
+            stock_code=data.get("code", ""),
+            basic_info=_format_basic_info(data.get("info", {})),
+            financial_data=_format_financial_data(data.get("financial", {})),
+            valuation_data=_format_valuation_data(data.get("valuation", {})),
+        )
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ]
+        for chunk in self.client.chat_stream(messages):
+            yield chunk
 
     def update_llm_config(self, base_url: str = None, api_key: str = None, model: str = None):
         self.client.update_config(base_url, api_key, model)

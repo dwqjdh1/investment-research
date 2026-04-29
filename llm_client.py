@@ -27,6 +27,20 @@ class LLMClient:
         )
         return response.choices[0].message.content
 
+    def chat_stream(self, messages: list[dict], temperature: float = None, max_tokens: int = None):
+        """流式发送对话请求，逐步返回文本块"""
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=temperature or config.TEMPERATURE,
+            max_tokens=max_tokens or config.MAX_TOKENS,
+            stream=True,
+        )
+        for chunk in response:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
+
     def generate_report(self, system_prompt: str, user_prompt: str) -> str:
         """生成研报"""
         messages = [

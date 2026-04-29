@@ -1,4 +1,5 @@
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 from data_fetcher import fetch_all_data, detect_market, search_stock, quick_resolve, warmup_market_data
 from report_generator import ReportGenerator
 from visualizer import (
@@ -360,7 +361,7 @@ if "stock_info" not in st.session_state:
 
 
 def _generate(code: str, name: str, market: str, base_url: str, api_key: str, model: str):
-    """Core report generation (same logic as original _do_generate)."""
+    """Core report generation with streaming LLM and parallel chart rendering."""
     if api_key:
         report_gen.update_llm_config(
             base_url=base_url.strip() if base_url else None,
@@ -388,21 +389,39 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
 
     meta_html = " · ".join(meta_parts) if meta_parts else ""
 
-    with st.spinner("绘制图表中..."):
-        financial = data.get("financial", {})
-        valuation = data.get("valuation", {})
-        prices = data.get("prices", {})
+    financial = data.get("financial", {})
+    valuation = data.get("valuation", {})
+    prices = data.get("prices", {})
 
-        fig_price = create_price_chart(prices, stock_name)
-        fig_trend = create_financial_trend_chart(financial, stock_name)
-        fig_profit = create_profitability_chart(financial, stock_name)
-        fig_valuation = create_valuation_gauge(valuation, stock_name)
+    # P1: 图表与LLM并行生成
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        f_price = executor.submit(create_price_chart, prices, stock_name)
+        f_trend = executor.submit(create_financial_trend_chart, financial, stock_name)
+        f_profit = executor.submit(create_profitability_chart, financial, stock_name)
+        f_valuation = executor.submit(create_valuation_gauge, valuation, stock_name)
 
-    with st.spinner("AI 撰写研报..."):
-        report_text, error = report_gen.generate(data)
+        # P0: 流式输出LLM研报内容
+        stream_placeholder = st.empty()
+        accumulated = ""
+        try:
+            for chunk in report_gen.generate_stream(data):
+                accumulated += chunk
+                stream_placeholder.markdown(accumulated)
+            report_text = accumulated
+            error = ""
+        except Exception as e:
+            report_text = ""
+            error = f"LLM调用失败：{str(e)}"
+            stream_placeholder.empty()
+
+        # 收集图表结果
+        fig_price = f_price.result()
+        fig_trend = f_trend.result()
+        fig_profit = f_profit.result()
+        fig_valuation = f_valuation.result()
 
     if error:
-        st.error(f"生成失败: {error}")
+        st.error(f"{error}")
         return
 
     header = f"## {stock_name}  `{code}`  {market_label}\n"
