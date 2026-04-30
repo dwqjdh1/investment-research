@@ -581,12 +581,17 @@ def compute_valuation(info: dict, financial: dict, prices: dict) -> dict:
     eps = financial.get("eps")
     bps = financial.get("bps")
 
+    # 行情缓存未就绪时，用历史收盘价回退
+    closes = prices.get("close", [])
+    if price is None and closes:
+        price = closes[-1]
+        info["latest_price"] = price  # 回写，确保后续展示正确
+
     if price and eps and eps > 0:
         val["pe_current"] = round(price / eps, 2)
     if price and bps and bps > 0:
         val["pb_current"] = round(price / bps, 2)
 
-    closes = prices.get("close", [])
     if closes:
         if len(closes) >= 22:
             val["change_1m"] = round((closes[-1] / closes[-22] - 1) * 100, 2)
