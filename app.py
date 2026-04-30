@@ -680,3 +680,30 @@ if st.session_state.report:
                 st.caption("原因：未抓取到该股票的相关新闻")
 else:
     st.info("在搜索框输入股票代码或名称，点击 **📊 生成研报** 或从热门股票中选择")
+
+
+# ── 启动预热：行情数据 + RAG 向量库 ─────────────────────────────
+def _startup_warmup():
+    """后台预热全市场行情缓存和 RAG 新闻向量库"""
+    import threading
+
+    def _warm_market():
+        warmup_market_data()
+
+    def _warm_rag():
+        try:
+            from sentiment.rag_store import get_rag_store
+            store = get_rag_store()
+            # 检查是否已有数据
+            total = store.count()
+            if total < 50:
+                from sentiment.prepopulate_rag import prepopulate
+                prepopulate(max_per_stock=10)
+        except Exception:
+            pass
+
+    threading.Thread(target=_warm_market, daemon=True).start()
+    threading.Thread(target=_warm_rag, daemon=True).start()
+
+
+_startup_warmup()

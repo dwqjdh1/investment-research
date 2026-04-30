@@ -546,16 +546,18 @@ def _get_price_history_impl(code: str, market: str) -> dict:
     elif market == MARKET_HK:
         code = normalize_hk_code(code)
         try:
-            df = ak.stock_hk_hist(symbol=code, period="daily", start_date="20240101",
-                                  end_date=datetime.now().strftime("%Y%m%d"), adjust="qfq")
+            # stock_hk_daily 比 stock_hk_hist (Yahoo) 更稳定，服务器可用
+            df = ak.stock_hk_daily(symbol=code, adjust="qfq")
             if not df.empty:
-                df = df.sort_values("日期")
-                prices["dates"] = df["日期"].astype(str).tolist()
-                prices["close"] = df["收盘"].tolist()
-                prices["open"] = df["开盘"].tolist()
-                prices["high"] = df["最高"].tolist()
-                prices["low"] = df["最低"].tolist()
-                prices["volume"] = df["成交量"].tolist()
+                df["date"] = pd.to_datetime(df["date"])
+                df = df[df["date"] >= pd.Timestamp("2024-01-01")]
+                df = df.sort_values("date")
+                prices["dates"] = df["date"].dt.strftime("%Y-%m-%d").tolist()
+                prices["close"] = df["close"].tolist()
+                prices["open"] = df["open"].tolist()
+                prices["high"] = df["high"].tolist()
+                prices["low"] = df["low"].tolist()
+                prices["volume"] = df["volume"].tolist()
         except Exception as e:
             prices["error"] = str(e)
 
