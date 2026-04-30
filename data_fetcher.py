@@ -66,21 +66,22 @@ def _get_a_spot():
     return df
 
 
-def _get_hk_spot():
-    """获取港股全列表（网络不稳定时返回空DataFrame）"""
+def _get_hk_spot(force_refresh: bool = False):
+    """获取港股全列表。失败时不缓存空数据，避免污染缓存。"""
     global _spot_hk_cache, _spot_hk_time
     now = datetime.now().timestamp()
-    if _spot_hk_cache is not None and (now - _spot_hk_time) < _CACHE_TTL:
+    if not force_refresh and _spot_hk_cache is not None and (now - _spot_hk_time) < _CACHE_TTL:
         return _spot_hk_cache
     try:
         df = ak.stock_hk_spot_em()
-        _spot_hk_cache = df
-        _spot_hk_time = now
-        return df
+        if not df.empty:
+            _spot_hk_cache = df
+            _spot_hk_time = now
+            return df
     except Exception:
-        _spot_hk_cache = pd.DataFrame()
-        _spot_hk_time = now
-        return _spot_hk_cache
+        pass
+    # 网络失败或返回空：返回空DataFrame，但不缓存（允许下次重试）
+    return pd.DataFrame()
 
 
 def _resolve_hk_name(code: str) -> str | None:
@@ -489,12 +490,14 @@ def get_stock_info(code: str, market: str = None) -> dict:
             if shares_val and shares_val > 0:
                 info["total_shares"] = shares_val
 
-            # 行情不可用时从PE×EPS反推最新价
+            # 行情不可用时从PE×EPS反推最新价（支持亏损企业：负PE×负EPS=正股价）
             if info.get("latest_price") is None:
                 eps_val = _safe_float(df_ind.iloc[0].get("基本每股收益(元)"))
                 pe_val = _safe_float(df_ind.iloc[0].get("市盈率"))
-                if eps_val and pe_val and eps_val > 0 and pe_val:
-                    info["latest_price"] = round(eps_val * pe_val, 2)
+                if eps_val and pe_val and eps_val != 0 and pe_val != 0:
+                    price_est = abs(eps_val * pe_val)
+                    if price_est > 0:
+                        info["latest_price"] = round(price_est, 2)
 
             # 有股价时计算市值
             price = info.get("latest_price")
