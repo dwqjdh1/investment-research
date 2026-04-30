@@ -10,6 +10,7 @@ from visualizer import (
     create_sentiment_gauge,
 )
 from config import config
+from llm_client import LLMClient
 from sentiment.analyzer import SentimentAnalyzer
 
 report_gen = ReportGenerator()
@@ -403,10 +404,16 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     sentiment_result = None
     if config.SENTIMENT_ENABLED:
         try:
-            sentiment_analyzer = SentimentAnalyzer()
-            sentiment_result = sentiment_analyzer.analyze(code, market)
-        except Exception:
-            pass
+            # 使用与 report_gen 相同的 LLM 配置
+            sentiment_llm = LLMClient(
+                base_url=base_url.strip() if base_url else None,
+                api_key=api_key.strip() if api_key else None,
+                model=model.strip() if model else None,
+            )
+            sentiment_analyzer = SentimentAnalyzer(llm_client=sentiment_llm)
+            sentiment_result = sentiment_analyzer.analyze(code.strip(), market)
+        except Exception as e:
+            st.warning(f"舆情分析失败：{e}")
 
     # 图表与LLM并行生成
     with ThreadPoolExecutor(max_workers=5) as executor:
