@@ -4,6 +4,19 @@ import chromadb
 from chromadb.utils import embedding_functions
 from datetime import datetime
 
+# 国内服务器下载 HuggingFace 模型会被墙，优先用 ONNX 模型
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+
+def _create_embedding_fn():
+    """创建 embedding 函数，ONNX 优先（不依赖 HuggingFace）"""
+    try:
+        fn = embedding_functions.ONNXMiniLM_L6_V2()
+        fn(["test"])  # 验证可用
+        return fn
+    except Exception:
+        return embedding_functions.DefaultEmbeddingFunction()
+
 
 class NewsVectorStore:
     """股票新闻向量存储：持久化新闻嵌入，支持语义检索和历史回查"""
@@ -16,7 +29,7 @@ class NewsVectorStore:
         os.makedirs(persist_dir, exist_ok=True)
 
         self._client = chromadb.PersistentClient(path=persist_dir)
-        self._embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+        self._embedding_fn = _create_embedding_fn()
         self._get_or_create_collection()
 
     def _get_or_create_collection(self):
@@ -24,6 +37,17 @@ class NewsVectorStore:
             self._collection = self._client.get_collection(
                 name="stock_news",
                 embedding_function=self._embedding_fn,
+            )
+        except ValueError:
+            # embedding 函数变更（如 default → ONNX），删旧建新
+            try:
+                self._client.delete_collection(name="stock_news")
+            except Exception:
+                pass
+            self._collection = self._client.create_collection(
+                name="stock_news",
+                embedding_function=self._embedding_fn,
+                metadata={"description": "股票新闻向量库"},
             )
         except Exception:
             self._collection = self._client.create_collection(

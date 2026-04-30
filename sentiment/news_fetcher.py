@@ -17,8 +17,12 @@ class NewsFetcher:
     @property
     def rag_store(self):
         if self._rag_store is None and self.use_rag:
-            from sentiment.rag_store import get_rag_store
-            self._rag_store = get_rag_store()
+            try:
+                from sentiment.rag_store import get_rag_store
+                self._rag_store = get_rag_store()
+            except Exception:
+                self.use_rag = False  # RAG 不可用时降级，不影响主流程
+                self._rag_store = None
         return self._rag_store
 
     def fetch(self, code: str, market: str = None) -> list[dict]:
