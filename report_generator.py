@@ -71,11 +71,25 @@ def _format_valuation_data(valuation: dict) -> str:
     return "\n".join(lines) if lines else "暂无"
 
 
+def _format_sentiment_data(sentiment) -> str:
+    if sentiment is None:
+        return "暂无舆情数据"
+    lines = [
+        f"- 情感倾向：{sentiment.label}",
+        f"- 综合得分：{sentiment.score:.2f}（-1极度负面 ~ +1极度正面）",
+        f"- 置信度：{sentiment.confidence:.0%}",
+        f"- 分析新闻数：{len(sentiment.articles)}条",
+    ]
+    if sentiment.summary:
+        lines.append(f"- 摘要：{sentiment.summary}")
+    return "\n".join(lines)
+
+
 class ReportGenerator:
     def __init__(self, client: LLMClient = None):
         self.client = client or LLMClient()
 
-    def generate(self, data: dict) -> tuple[str, str]:
+    def generate(self, data: dict, sentiment_data=None) -> tuple[str, str]:
         name = (data.get("info") or {}).get("name") or data.get("code", "未知")
         prompt = COMPREHENSIVE_REPORT_PROMPT.format(
             stock_name=name,
@@ -83,6 +97,7 @@ class ReportGenerator:
             basic_info=_format_basic_info(data.get("info", {})),
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
+            sentiment_data=_format_sentiment_data(sentiment_data),
         )
         try:
             report = self.client.generate_report(SYSTEM_PROMPT, prompt)
@@ -90,7 +105,7 @@ class ReportGenerator:
         except Exception as e:
             return "", f"LLM调用失败：{str(e)}"
 
-    def generate_stream(self, data: dict):
+    def generate_stream(self, data: dict, sentiment_data=None):
         """流式生成研报，逐步返回文本块"""
         name = (data.get("info") or {}).get("name") or data.get("code", "未知")
         prompt = COMPREHENSIVE_REPORT_PROMPT.format(
@@ -99,6 +114,7 @@ class ReportGenerator:
             basic_info=_format_basic_info(data.get("info", {})),
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
+            sentiment_data=_format_sentiment_data(sentiment_data),
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},

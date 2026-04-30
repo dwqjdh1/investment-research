@@ -11,6 +11,9 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 ## 估值与行情
 {valuation_data}
 
+## 舆情数据
+{sentiment_data}
+
 ---
 
 按结构输出：
@@ -23,6 +26,10 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 - 盈利能力（ROE/毛利率/净利率，1-2句）
 - 成长性（营收/利润趋势，1-2句）
 - 财务健康度（负债水平，1句）
+
+### 二点五、舆情判断
+- 根据舆情数据判断市场情绪倾向（1-2句）
+- 是否存在重大利好/利空消息（1句）
 
 ### 三、SWOT 分析
 | 维度 | 分析 |

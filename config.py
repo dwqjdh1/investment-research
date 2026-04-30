@@ -10,6 +10,8 @@ class Config:
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o")
     MAX_TOKENS: int = 2048
     TEMPERATURE: float = 0.3
+    NEWS_MAX_ARTICLES: int = int(os.getenv("NEWS_MAX_ARTICLES", "10"))
+    SENTIMENT_ENABLED: bool = os.getenv("SENTIMENT_ENABLED", "true").lower() != "false"
 
 
 config = Config()

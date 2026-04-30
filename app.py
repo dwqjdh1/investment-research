@@ -7,8 +7,10 @@ from visualizer import (
     create_profitability_chart,
     create_valuation_gauge,
     create_price_chart,
+    create_sentiment_gauge,
 )
 from config import config
+from sentiment.analyzer import SentimentAnalyzer
 
 report_gen = ReportGenerator()
 
@@ -356,6 +358,10 @@ if "profit_chart" not in st.session_state:
     st.session_state.profit_chart = None
 if "valuation_chart" not in st.session_state:
     st.session_state.valuation_chart = None
+if "sentiment" not in st.session_state:
+    st.session_state.sentiment = None
+if "sentiment_chart" not in st.session_state:
+    st.session_state.sentiment_chart = None
 if "stock_info" not in st.session_state:
     st.session_state.stock_info = ""
 
@@ -393,18 +399,28 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     valuation = data.get("valuation", {})
     prices = data.get("prices", {})
 
-    # P1: 图表与LLM并行生成
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    # 情感分析（先于报告生成，使舆情数据纳入研报）
+    sentiment_result = None
+    if config.SENTIMENT_ENABLED:
+        try:
+            sentiment_analyzer = SentimentAnalyzer()
+            sentiment_result = sentiment_analyzer.analyze(code, market)
+        except Exception:
+            pass
+
+    # 图表与LLM并行生成
+    with ThreadPoolExecutor(max_workers=5) as executor:
         f_price = executor.submit(create_price_chart, prices, stock_name)
         f_trend = executor.submit(create_financial_trend_chart, financial, stock_name)
         f_profit = executor.submit(create_profitability_chart, financial, stock_name)
         f_valuation = executor.submit(create_valuation_gauge, valuation, stock_name)
+        f_sentiment_chart = executor.submit(create_sentiment_gauge, sentiment_result, stock_name)
 
-        # P0: 流式输出LLM研报内容
+        # 流式输出LLM研报（含舆情数据）
         stream_placeholder = st.empty()
         accumulated = ""
         try:
-            for chunk in report_gen.generate_stream(data):
+            for chunk in report_gen.generate_stream(data, sentiment_data=sentiment_result):
                 accumulated += chunk
                 stream_placeholder.markdown(accumulated)
             report_text = accumulated
@@ -419,6 +435,7 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
         fig_trend = f_trend.result()
         fig_profit = f_profit.result()
         fig_valuation = f_valuation.result()
+        fig_sentiment = f_sentiment_chart.result()
 
     if error:
         st.error(f"{error}")
@@ -433,6 +450,8 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     st.session_state.trend_chart = fig_trend
     st.session_state.profit_chart = fig_profit
     st.session_state.valuation_chart = fig_valuation
+    st.session_state.sentiment = sentiment_result
+    st.session_state.sentiment_chart = fig_sentiment
     st.session_state.stock_info = f"已生成 {stock_name} ({code}) 的研报"
 
 
@@ -594,7 +613,9 @@ if st.session_state.stock_info:
 
 # Output tabs
 if st.session_state.report:
-    tab_report, tab_price, tab_finance = st.tabs(["📄 研报", "📈 走势图", "💹 财务图"])
+    tab_report, tab_price, tab_finance, tab_sentiment = st.tabs(
+        ["📄 研报", "📈 走势图", "💹 财务图", "📰 舆情"]
+    )
 
     with tab_report:
         st.markdown(st.session_state.report)
@@ -612,5 +633,34 @@ if st.session_state.report:
             c1.plotly_chart(st.session_state.profit_chart, use_container_width=True)
         if st.session_state.valuation_chart:
             c2.plotly_chart(st.session_state.valuation_chart, use_container_width=True)
+
+    with tab_sentiment:
+        sentiment = st.session_state.sentiment
+        if sentiment and sentiment.articles:
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                if st.session_state.sentiment_chart:
+                    st.plotly_chart(st.session_state.sentiment_chart, use_container_width=True)
+            with col2:
+                st.markdown("### 舆情概览")
+                st.markdown(f"**情感倾向**: {sentiment.label}")
+                st.markdown(f"**综合得分**: {sentiment.score:.2f}")
+                st.markdown(f"**置信度**: {sentiment.confidence:.0%}")
+                if sentiment.summary:
+                    st.markdown("---")
+                    st.markdown(sentiment.summary)
+                st.markdown("---")
+                st.markdown("#### 逐条分析")
+                emoji_map = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}
+                for art in sentiment.articles:
+                    emoji = emoji_map.get(art.get("sentiment", ""), "⚪")
+                    conf = art.get("confidence", 0)
+                    st.markdown(
+                        f"- {emoji} **{art.get('title', '')}**  "
+                        f"({conf:.0%})  "
+                        f"_{art.get('reasoning', '')}_"
+                    )
+        else:
+            st.info("暂无舆情数据 — 该股票近期无相关新闻或情感分析不可用")
 else:
     st.info("在搜索框输入股票代码或名称，点击 **📊 生成研报** 或从热门股票中选择")

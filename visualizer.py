@@ -192,3 +192,49 @@ def create_price_chart(prices: dict, stock_name: str) -> go.Figure:
     fig.update_yaxes(title_text="价格(元)", gridcolor=COLORS["grid"])
     fig.update_xaxes(gridcolor=COLORS["grid"])
     return fig
+
+
+def create_sentiment_gauge(sentiment, stock_name: str = "") -> go.Figure:
+    """情感分析仪表盘"""
+    if sentiment is None or not sentiment.articles:
+        fig = go.Figure()
+        fig.add_annotation(text="舆情数据不足", xref="paper", yref="paper",
+                           x=0.5, y=0.5, showarrow=False,
+                           font=dict(size=14, color=COLORS["text_light"]))
+        fig.update_layout(**COMMON_LAYOUT)
+        return fig
+
+    score = sentiment.score  # -1 to +1
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=score,
+        title={"text": f"{stock_name}  ·  舆情情感指数" if stock_name else "舆情情感指数",
+               "font": {"size": 14, "weight": 600, "color": "#1e293b"}},
+        number={"suffix": "", "font": {"size": 36, "color": COLORS["primary"]}},
+        gauge={
+            "axis": {"range": [-1, 1], "tickwidth": 1, "tickcolor": COLORS["text"]},
+            "bar": {"color": COLORS["primary"]},
+            "steps": [
+                {"range": [-1, -0.3], "color": "rgba(239,68,68,0.2)"},
+                {"range": [-0.3, 0.3], "color": "rgba(245,158,11,0.2)"},
+                {"range": [0.3, 1], "color": "rgba(16,185,129,0.2)"},
+            ],
+            "threshold": {
+                "line": {"color": COLORS["text"], "width": 2},
+                "thickness": 0.75, "value": score,
+            },
+        },
+    ))
+
+    label = sentiment.label
+    conf = sentiment.confidence
+    n = len(sentiment.articles)
+    fig.add_annotation(
+        text=f"倾向：{label}  |  置信度：{conf:.0%}  |  分析 {n} 条新闻",
+        xref="paper", yref="paper", x=0.5, y=-0.02,
+        showarrow=False,
+        font=dict(size=12, color=COLORS["text_light"]),
+    )
+
+    fig.update_layout(**COMMON_LAYOUT, margin=dict(l=40, r=40, t=70, b=60))
+    return fig
