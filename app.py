@@ -467,9 +467,12 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
 
 def _get_llm_config():
     """Return LLM config from session state, falling back to defaults."""
+    api_key = st.session_state.get("api_key", "")
+    if not api_key:
+        api_key = config.LLM_API_KEY  # 用户未填写时使用服务器默认值
     return (
         st.session_state.get("base_url", config.LLM_BASE_URL),
-        st.session_state.get("api_key", config.LLM_API_KEY),
+        api_key,
         st.session_state.get("model", config.LLM_MODEL),
     )
 
@@ -615,7 +618,7 @@ with st.expander("⚙️ API 设置"):
     c1, c2 = st.columns(2)
     base_url_input = c1.text_input("Base URL", value=config.LLM_BASE_URL, key="base_url")
     model_input = c2.text_input("Model", value=config.LLM_MODEL, key="model")
-    api_key_input = st.text_input("API Key", value=config.LLM_API_KEY, type="password", key="api_key")
+    api_key_input = st.text_input("API Key", value="", type="password", key="api_key", placeholder="输入API Key（留空使用服务器默认配置）")
 
 # Status message
 if st.session_state.stock_info:
