@@ -54,3 +54,8 @@ data/
 
 # Claude Code
 .claude/
+
+# Project docs & temp (not needed for runtime)
+*.docx
+tmp_out/
+~$*
