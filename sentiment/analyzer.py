@@ -75,10 +75,18 @@ class SentimentAnalyzer:
                     "reasoning": art.get("reasoning", ""),
                 })
 
-        return SentimentResult(
+        result = SentimentResult(
             score=score, label=label, confidence=confidence,
             articles=enriched, summary=summary,
         )
+
+        # 将已分析新闻写入 RAG 向量库（后台积累）
+        try:
+            self.news_fetcher.index_articles(code, articles)
+        except Exception:
+            pass
+
+        return result
 
     def _call_llm(self, code: str, articles: list[dict]) -> list[dict]:
         news_lines = []

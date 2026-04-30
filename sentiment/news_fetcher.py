@@ -1,64 +1,25 @@
-import akshare as ak
+"""新闻采集器 — 多数据源聚合 + RAG 向量库回退"""
 from datetime import datetime
+from sentiment.news_sources import fetch_all_sources, fetch_eastmoney
 
 _NEWS_CACHE: dict[str, tuple[list[dict], float]] = {}
 _NEWS_CACHE_TTL = 300
 
 
-def _safe_str(val) -> str:
-    if val is None:
-        return ""
-    s = str(val)
-    return "" if s in ("nan", "None") else s
-
-
-def _extract_articles(df, max_articles: int) -> list[dict]:
-    """从 DataFrame 中提取新闻，自动识别列位置"""
-    cols = list(df.columns)
-    # 按列名关键词定位：标题、内容、来源、时间
-    col_map = {}
-    for i, c in enumerate(cols):
-        cstr = str(c)
-        if "标题" in cstr or "title" in cstr.lower():
-            col_map.setdefault("title", i)
-        elif "内容" in cstr or "content" in cstr.lower():
-            col_map.setdefault("content", i)
-        elif "来源" in cstr or "source" in cstr.lower():
-            col_map.setdefault("source", i)
-        elif "时间" in cstr or "time" in cstr.lower() or "date" in cstr.lower():
-            col_map.setdefault("time", i)
-
-    # 基于位置的 fallback（stock_news_em 固定顺序：关键词/标题/内容/时间/来源/链接）
-    if "title" not in col_map and len(cols) >= 2:
-        col_map["title"] = 1
-    if "content" not in col_map and len(cols) >= 3:
-        col_map["content"] = 2
-    if "time" not in col_map and len(cols) >= 4:
-        col_map["time"] = 3
-    if "source" not in col_map and len(cols) >= 5:
-        col_map["source"] = 4
-
-    articles = []
-    for _, row in df.head(max_articles).iterrows():
-        title = _safe_str(row.iloc[col_map["title"]]) if "title" in col_map else ""
-        content = _safe_str(row.iloc[col_map["content"]]) if "content" in col_map else title
-        source = _safe_str(row.iloc[col_map["source"]]) if "source" in col_map else ""
-        pub_time = _safe_str(row.iloc[col_map["time"]]) if "time" in col_map else ""
-        if title or content:
-            articles.append({
-                "title": title,
-                "content": content[:500] if content else title[:500],
-                "source": source,
-                "publish_time": pub_time,
-            })
-    return articles
-
-
 class NewsFetcher:
-    """从 AKShare 获取股票相关新闻，带 TTL 缓存"""
+    """聚合多数据源 + RAG 回退的新闻采集器"""
 
-    def __init__(self, max_articles: int = 10):
+    def __init__(self, max_articles: int = 10, use_rag: bool = True):
         self.max_articles = max_articles
+        self.use_rag = use_rag
+        self._rag_store = None
+
+    @property
+    def rag_store(self):
+        if self._rag_store is None and self.use_rag:
+            from sentiment.rag_store import get_rag_store
+            self._rag_store = get_rag_store()
+        return self._rag_store
 
     def fetch(self, code: str, market: str = None) -> list[dict]:
         cache_key = f"{market or 'auto'}_{code}"
@@ -73,23 +34,29 @@ class NewsFetcher:
         return articles
 
     def _do_fetch(self, code: str, market: str = None) -> list[dict]:
-        # 主数据源：东方财富个股新闻
-        try:
-            df = ak.stock_news_em(symbol=code)
-            if not df.empty:
-                articles = _extract_articles(df, self.max_articles)
-                if articles:
-                    return articles
-        except Exception:
-            pass
+        # 1. 实时多数据源聚合
+        articles = fetch_all_sources(code, market, self.max_articles)
 
-        # 港股额外数据源
-        if market == "hk_share":
+        # 2. 实时源不足时，RAG 向量库补充
+        if len(articles) < 3 and self.rag_store:
             try:
-                df = ak.stock_hk_news(symbol=code)
-                if not df.empty:
-                    return _extract_articles(df, self.max_articles)
+                rag_articles = self.rag_store.get_recent(code, self.max_articles)
+                # 去重合并
+                existing_titles = {a["title"][:60] for a in articles}
+                for ra in rag_articles:
+                    if ra["title"][:60] not in existing_titles:
+                        existing_titles.add(ra["title"][:60])
+                        articles.append(ra)
             except Exception:
                 pass
 
-        return []
+        return articles[:self.max_articles]
+
+    def index_articles(self, code: str, articles: list[dict]) -> int:
+        """将已分析的新闻写入 RAG 向量库"""
+        if not articles or not self.rag_store:
+            return 0
+        try:
+            return self.rag_store.add_articles(code, articles)
+        except Exception:
+            return 0

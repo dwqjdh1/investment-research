@@ -12,6 +12,8 @@ class Config:
     TEMPERATURE: float = 0.3
     NEWS_MAX_ARTICLES: int = int(os.getenv("NEWS_MAX_ARTICLES", "10"))
     SENTIMENT_ENABLED: bool = os.getenv("SENTIMENT_ENABLED", "true").lower() != "false"
+    RAG_ENABLED: bool = os.getenv("RAG_ENABLED", "true").lower() != "false"
+    RAG_PERSIST_DIR: str = os.getenv("RAG_PERSIST_DIR", "")  # 空=默认 data/chroma_db
 
 
 config = Config()

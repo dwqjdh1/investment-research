@@ -48,3 +48,9 @@ build/
 
 # Gradio cache
 .gradio/
+
+# ChromaDB vector store
+data/
+
+# Claude Code
+.claude/
