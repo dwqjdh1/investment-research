@@ -402,6 +402,7 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
 
     # 情感分析（先于报告生成，使舆情数据纳入研报）
     sentiment_result = None
+    sentiment_error = None
     if config.SENTIMENT_ENABLED:
         try:
             # 使用与 report_gen 相同的 LLM 配置
@@ -413,6 +414,7 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
             sentiment_analyzer = SentimentAnalyzer(llm_client=sentiment_llm)
             sentiment_result = sentiment_analyzer.analyze(code.strip(), market)
         except Exception as e:
+            sentiment_error = str(e)
             st.warning(f"舆情分析失败：{e}")
 
     # 图表与LLM并行生成
@@ -444,6 +446,13 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
         fig_valuation = f_valuation.result()
         fig_sentiment = f_sentiment_chart.result()
 
+    # 存储图表和舆情结果（即使LLM失败也能展示）
+    st.session_state.price_chart = fig_price
+    st.session_state.trend_chart = fig_trend
+    st.session_state.profit_chart = fig_profit
+    st.session_state.valuation_chart = fig_valuation
+    st.session_state.sentiment = sentiment_result
+    st.session_state.sentiment_chart = fig_sentiment
     if error:
         st.error(f"{error}")
         return
@@ -453,12 +462,6 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
         header += f"> *{meta_html}*\n\n---\n"
 
     st.session_state.report = header + report_text
-    st.session_state.price_chart = fig_price
-    st.session_state.trend_chart = fig_trend
-    st.session_state.profit_chart = fig_profit
-    st.session_state.valuation_chart = fig_valuation
-    st.session_state.sentiment = sentiment_result
-    st.session_state.sentiment_chart = fig_sentiment
     st.session_state.stock_info = f"已生成 {stock_name} ({code}) 的研报"
 
 
@@ -668,6 +671,12 @@ if st.session_state.report:
                         f"_{art.get('reasoning', '')}_"
                     )
         else:
-            st.info("暂无舆情数据 — 该股票近期无相关新闻或情感分析不可用")
+            st.info("暂无舆情数据")
+            if sentiment is None:
+                st.caption("原因：情感分析未执行或执行失败。请检查 API 设置是否正确。")
+                if sentiment_error:
+                    st.error(f"分析错误：{sentiment_error}")
+            elif not sentiment.articles:
+                st.caption("原因：未抓取到该股票的相关新闻")
 else:
     st.info("在搜索框输入股票代码或名称，点击 **📊 生成研报** 或从热门股票中选择")
