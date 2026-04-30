@@ -47,18 +47,20 @@ class SentimentAnalyzer:
                 articles=[], summary="暂无相关新闻数据",
             )
 
+        _raw_response = ""
         try:
-            per_article = self._call_llm(code, articles)
-        except Exception:
+            per_article, _raw_response = self._call_llm(code, articles)
+        except Exception as e:
             return SentimentResult(
                 score=0.0, label="中性", confidence=0.0,
-                articles=articles, summary="LLM 情感分析调用失败",
+                articles=articles, summary=f"LLM 情感分析调用失败：{e}",
             )
 
         if not per_article:
+            preview = _raw_response[:500].replace("\n", " ")[:400]
             return SentimentResult(
                 score=0.0, label="中性", confidence=0.0,
-                articles=articles, summary="无法解析情感分析结果",
+                articles=articles, summary=f"无法解析情感分析结果。LLM原始返回：{preview}...",
             )
 
         score, label, confidence = self._aggregate(per_article)
@@ -66,8 +68,11 @@ class SentimentAnalyzer:
 
         enriched = []
         for art in per_article:
-            idx = art.get("index", 0)
-            if idx < len(articles):
+            try:
+                idx = int(art.get("index", 0))
+            except (ValueError, TypeError):
+                continue
+            if 0 <= idx < len(articles):
                 enriched.append({
                     "title": articles[idx]["title"],
                     "sentiment": art.get("sentiment", "neutral"),
@@ -88,7 +93,7 @@ class SentimentAnalyzer:
 
         return result
 
-    def _call_llm(self, code: str, articles: list[dict]) -> list[dict]:
+    def _call_llm(self, code: str, articles: list[dict]) -> tuple[list[dict], str]:
         news_lines = []
         for i, art in enumerate(articles):
             news_lines.append(f"[{i}] 标题: {art['title']}\n    内容: {art['content'][:300]}")
@@ -104,7 +109,10 @@ class SentimentAnalyzer:
             {"role": "user", "content": prompt},
         ]
         response = self.client.chat(messages, temperature=0.1, max_tokens=1024)
-        return self._parse_response(response)
+        print(f"[DEBUG] LLM response ({len(response)} chars): {response[:800]}")
+        parsed = self._parse_response(response)
+        print(f"[DEBUG] Parsed {len(parsed)} articles")
+        return parsed, response
 
     def _parse_response(self, response: str) -> list[dict]:
         # 尝试直接 JSON 解析

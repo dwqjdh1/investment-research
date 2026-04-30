@@ -236,5 +236,6 @@ def create_sentiment_gauge(sentiment, stock_name: str = "") -> go.Figure:
         font=dict(size=12, color=COLORS["text_light"]),
     )
 
-    fig.update_layout(**COMMON_LAYOUT, margin=dict(l=40, r=40, t=70, b=60))
+    fig.update_layout(**COMMON_LAYOUT)
+    fig.update_layout(margin=dict(l=40, r=40, t=70, b=60))
     return fig

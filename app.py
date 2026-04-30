@@ -453,6 +453,7 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     st.session_state.valuation_chart = fig_valuation
     st.session_state.sentiment = sentiment_result
     st.session_state.sentiment_chart = fig_sentiment
+    st.session_state.sentiment_error = sentiment_error
     if error:
         st.error(f"{error}")
         return
@@ -677,8 +678,8 @@ if st.session_state.report:
             st.info("暂无舆情数据")
             if sentiment is None:
                 st.caption("原因：情感分析未执行或执行失败。请检查 API 设置是否正确。")
-                if sentiment_error:
-                    st.error(f"分析错误：{sentiment_error}")
+                if st.session_state.get("sentiment_error"):
+                    st.error(f"分析错误：{st.session_state.sentiment_error}")
             elif not sentiment.articles:
                 st.caption("原因：未抓取到该股票的相关新闻")
 else:
