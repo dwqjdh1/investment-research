@@ -73,8 +73,9 @@ def fetch_eastmoney_direct(code: str, max_articles: int = 10) -> list[dict]:
             "Referer": "https://data.eastmoney.com/",
         }
         resp = requests.get(url, params=params, headers=headers, timeout=10)
-        resp.encoding = "utf-8"
-        data = json.loads(resp.text)
+        # 使用 utf-8-sig 处理 BOM 头
+        text = resp.content.decode("utf-8-sig")
+        data = json.loads(text)
 
         articles = []
         for item in data.get("data", []) or []:
