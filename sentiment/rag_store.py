@@ -4,18 +4,26 @@ import chromadb
 from chromadb.utils import embedding_functions
 from datetime import datetime
 
-# 国内服务器下载 HuggingFace 模型会被墙，优先用 ONNX 模型
+# 国内服务器下载 HuggingFace 模型会被墙，优先用轻量方案
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+
+# 环境变量控制 embedding 方案：default（最快）/ onnx（较好但需下载79MB）
+EMBEDDING_TYPE = os.getenv("RAG_EMBEDDING", "default").lower()
 
 
 def _create_embedding_fn():
-    """创建 embedding 函数，ONNX 优先（不依赖 HuggingFace）"""
-    try:
-        fn = embedding_functions.ONNXMiniLM_L6_V2()
-        fn(["test"])  # 验证可用
-        return fn
-    except Exception:
-        return embedding_functions.DefaultEmbeddingFunction()
+    """创建 embedding 函数，优先使用无需下载的方案"""
+    if EMBEDDING_TYPE == "onnx":
+        try:
+            fn = embedding_functions.ONNXMiniLM_L6_V2()
+            fn(["test"])
+            print("[RAG] 使用 ONNX embedding 模型")
+            return fn
+        except Exception as e:
+            print(f"[RAG] ONNX 模型加载失败: {e}，降级使用 Default")
+    # 默认方案：无需下载，内置轻量 embedding
+    print("[RAG] 使用 Default embedding（无需下载模型）")
+    return embedding_functions.DefaultEmbeddingFunction()
 
 
 class NewsVectorStore:
