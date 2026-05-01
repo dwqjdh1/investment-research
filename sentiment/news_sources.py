@@ -1,6 +1,8 @@
-"""多数据源新闻采集 — 聚合多个 AKShare 新闻接口，提高覆盖率"""
-import akshare as ak
+"""多数据源新闻采集 — 直接请求 API + AKShare 备用"""
+import requests
+import json
 from datetime import datetime
+import akshare as ak
 
 
 def _safe_str(val) -> str:
@@ -53,14 +55,59 @@ def _extract_articles(df, max_articles: int) -> list[dict]:
     return articles
 
 
-# ── 各数据源适配器 ──
+# ── 直接 API 请求（绕过 akshare bug）──
+
+def fetch_eastmoney_direct(code: str, max_articles: int = 10) -> list[dict]:
+    """直接请求东方财富新闻 API（绕过 akshare 正则 bug）"""
+    try:
+        # 东方财富新闻 API
+        url = "https://data.eastmoney.com/news/data/newsget.aspx"
+        params = {
+            "code": code,
+            "ps": max_articles,
+            "p": 1,
+            "type": "news",
+        }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://data.eastmoney.com/",
+        }
+        resp = requests.get(url, params=params, headers=headers, timeout=10)
+        resp.encoding = "utf-8"
+        data = json.loads(resp.text)
+
+        articles = []
+        for item in data.get("data", []) or []:
+            title = item.get("title", "")
+            content = item.get("digest", "") or title
+            source = item.get("source", "")
+            pub_time = item.get("showtime", "")
+            if title:
+                articles.append({
+                    "title": title,
+                    "content": content[:500],
+                    "source": source,
+                    "publish_time": pub_time,
+                })
+        return articles[:max_articles]
+    except Exception as e:
+        print(f"[News] 东方财富 API 请求失败: {e}")
+        return []
+
 
 def fetch_eastmoney(code: str, max_articles: int = 10) -> list[dict]:
-    """东方财富个股新闻（主数据源）"""
+    """东方财富个股新闻（优先直接 API，失败则 akshare 备用）"""
+    # 优先直接请求 API
+    articles = fetch_eastmoney_direct(code, max_articles)
+    if articles:
+        return articles
+
+    # 备用：akshare（某些环境可能有问题）
     try:
         df = ak.stock_news_em(symbol=code)
         return _extract_articles(df, max_articles)
-    except Exception:
+    except Exception as e:
+        print(f"[News] akshare 备用失败: {e}")
         return []
 
 
