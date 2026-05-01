@@ -365,6 +365,10 @@ if "sentiment_chart" not in st.session_state:
     st.session_state.sentiment_chart = None
 if "stock_info" not in st.session_state:
     st.session_state.stock_info = ""
+if "pending_generate" not in st.session_state:
+    st.session_state.pending_generate = None
+if "pending_resolve" not in st.session_state:
+    st.session_state.pending_resolve = None
 
 
 def _generate(code: str, name: str, market: str, base_url: str, api_key: str, model: str):
@@ -545,9 +549,12 @@ with hot_container:
             if st.button(name, key=f"hot_{code}", use_container_width=True):
                 market = detect_market(code)
                 base_url, api_key, model = _get_llm_config()
-                _generate(code, name, market, base_url, api_key, model)
+                st.session_state.pending_generate = {
+                    "code": code, "name": name, "market": market,
+                    "base_url": base_url, "api_key": api_key, "model": model,
+                }
                 st.rerun()
-    
+
     if len(second_row) > 0:
         cols2 = st.columns(6)
         for i, (name, code) in enumerate(second_row):
@@ -555,7 +562,10 @@ with hot_container:
                 if st.button(name, key=f"hot2_{code}", use_container_width=True):
                     market = detect_market(code)
                     base_url, api_key, model = _get_llm_config()
-                    _generate(code, name, market, base_url, api_key, model)
+                    st.session_state.pending_generate = {
+                        "code": code, "name": name, "market": market,
+                        "base_url": base_url, "api_key": api_key, "model": model,
+                    }
                     st.rerun()
 
 # Search results
@@ -596,8 +606,17 @@ if search_clicked and keyword.strip():
 
 if generate_clicked and keyword.strip():
     base_url, api_key, model = _get_llm_config()
-    _resolve_and_generate(keyword, base_url, api_key, model)
+    st.session_state.pending_resolve = {
+        "keyword": keyword.strip(),
+        "base_url": base_url, "api_key": api_key, "model": model,
+    }
     st.rerun()
+
+# Handle pending resolve (from search bar generate)
+if st.session_state.get("pending_resolve"):
+    pr = st.session_state.pending_resolve
+    st.session_state.pending_resolve = None
+    _resolve_and_generate(pr["keyword"], pr["base_url"], pr["api_key"], pr["model"])
 
 # Stock choice dropdown (from search)
 search_choices = st.session_state.get("search_choices", [])
@@ -611,7 +630,10 @@ if search_choices:
             name = st.session_state.get("search_names", [])[idx] if idx < len(st.session_state.get("search_names", [])) else ""
             market = markets[idx] if idx < len(markets) else detect_market(code)
             base_url, api_key, model = _get_llm_config()
-            _generate(code, name, market, base_url, api_key, model)
+            st.session_state.pending_generate = {
+                "code": code, "name": name, "market": market,
+                "base_url": base_url, "api_key": api_key, "model": model,
+            }
             st.rerun()
 
 # API settings
@@ -624,6 +646,13 @@ with st.expander("⚙️ API 设置"):
 # Status message
 if st.session_state.stock_info:
     st.success(st.session_state.stock_info)
+
+# Handle pending generate (from hot stocks) - 流式输出在正确位置
+if st.session_state.pending_generate:
+    pg = st.session_state.pending_generate
+    st.session_state.pending_generate = None  # 清除待处理状态
+    _generate(pg["code"], pg["name"], pg["market"], pg["base_url"], pg["api_key"], pg["model"])
+    # 不要 rerun，让流式输出正常显示
 
 # Output tabs
 if st.session_state.report:
