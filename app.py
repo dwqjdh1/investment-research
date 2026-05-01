@@ -438,6 +438,7 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
                 stream_placeholder.markdown(accumulated)
             report_text = accumulated
             error = ""
+            stream_placeholder.empty()  # 流式完成后清除，避免重复显示
         except Exception as e:
             report_text = ""
             error = f"LLM调用失败：{str(e)}"
@@ -643,16 +644,16 @@ with st.expander("⚙️ API 设置"):
     model_input = c2.text_input("Model", value=config.LLM_MODEL, key="model")
     api_key_input = st.text_input("API Key", value="", type="password", key="api_key", placeholder="输入API Key（留空使用服务器默认配置）")
 
-# Status message
-if st.session_state.stock_info:
-    st.success(st.session_state.stock_info)
-
 # Handle pending generate (from hot stocks) - 流式输出在正确位置
 if st.session_state.pending_generate:
     pg = st.session_state.pending_generate
     st.session_state.pending_generate = None  # 清除待处理状态
     _generate(pg["code"], pg["name"], pg["market"], pg["base_url"], pg["api_key"], pg["model"])
     # 不要 rerun，让流式输出正常显示
+
+# Status message（放在 pending_generate 处理之后，确保显示最新的提示）
+if st.session_state.stock_info:
+    st.success(st.session_state.stock_info)
 
 # Output tabs
 if st.session_state.report:
