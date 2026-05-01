@@ -1,8 +1,18 @@
 """多数据源新闻采集 — 直接请求 API + AKShare 备用"""
-import requests
 import json
+import re
 from datetime import datetime
 import akshare as ak
+
+# 优先使用 curl_cffi（绕过 TLS 指纹检测），降级到普通 requests
+try:
+    from curl_cffi import requests as cffi_requests
+    HTTP_CLIENT = cffi_requests
+    CFFI_AVAILABLE = True
+except ImportError:
+    import requests as cffi_requests
+    HTTP_CLIENT = cffi_requests
+    CFFI_AVAILABLE = False
 
 
 def _safe_str(val) -> str:
@@ -60,37 +70,69 @@ def _extract_articles(df, max_articles: int) -> list[dict]:
 def fetch_eastmoney_direct(code: str, max_articles: int = 10) -> list[dict]:
     """直接请求东方财富新闻 API（绕过 akshare 正则 bug）"""
     try:
-        # 东方财富新闻 API
-        url = "https://data.eastmoney.com/news/data/newsget.aspx"
+        # 东方财富搜索 API（与 akshare 内部使用同一接口）
+        url = "https://search-api-web.eastmoney.com/search/jsonp"
+        inner_param = {
+            "uid": "",
+            "keyword": code,
+            "type": ["cmsArticleWebOld"],
+            "client": "web",
+            "clientType": "web",
+            "clientVersion": "curr",
+            "param": {
+                "cmsArticleWebOld": {
+                    "searchScope": "default",
+                    "sort": "default",
+                    "pageIndex": 1,
+                    "pageSize": max_articles,
+                    "preTag": "<em>",
+                    "postTag": "</em>",
+                }
+            },
+        }
         params = {
-            "code": code,
-            "ps": max_articles,
-            "p": 1,
-            "type": "news",
+            "cb": "jQuery_callback",
+            "param": json.dumps(inner_param, ensure_ascii=False),
+            "_": "1",
         }
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://data.eastmoney.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://so.eastmoney.com/news/s",
+            "Accept": "*/*",
         }
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        # 使用 utf-8-sig 处理 BOM 头
-        text = resp.content.decode("utf-8-sig")
-        data = json.loads(text)
+        # curl_cffi 支持 impersonate 参数模拟浏览器 TLS 指纹
+        if CFFI_AVAILABLE:
+            resp = HTTP_CLIENT.get(url, params=params, headers=headers, timeout=10, impersonate="chrome120")
+        else:
+            resp = HTTP_CLIENT.get(url, params=params, headers=headers, timeout=10)
+        text = resp.text
+
+        # 提取 JSONP 回调中的 JSON 数据
+        start = text.find("(") + 1
+        end = text.rfind(")")
+        if start <= 0 or end <= start:
+            return []
+        data = json.loads(text[start:end])
 
         articles = []
-        for item in data.get("data", []) or []:
+        items = data.get("result", {}).get("cmsArticleWebOld", []) or []
+        for item in items[:max_articles]:
             title = item.get("title", "")
-            content = item.get("digest", "") or title
-            source = item.get("source", "")
-            pub_time = item.get("showtime", "")
+            content = item.get("content", "")
+            # 清理 HTML 标签和特殊字符
+            title = re.sub(r"<em>|</em>", "", title)
+            content = re.sub(r"<em>|</em>", "", content)
+            content = content.replace("　", "").replace("\r\n", " ")
+            source = item.get("mediaName", "")
+            pub_time = item.get("date", "")
             if title:
                 articles.append({
                     "title": title,
-                    "content": content[:500],
+                    "content": content[:500] if content else title[:500],
                     "source": source,
                     "publish_time": pub_time,
                 })
-        return articles[:max_articles]
+        return articles
     except Exception as e:
         print(f"[News] 东方财富 API 请求失败: {e}")
         return []
