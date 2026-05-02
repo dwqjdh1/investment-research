@@ -41,11 +41,13 @@ class NewsFetcher:
         # 1. 实时多数据源聚合
         articles = fetch_all_sources(code, market, self.max_articles)
 
-        # 2. 实时源不足时，RAG 向量库补充
+        # 2. 实时源不足时，走 RAG 向量库做语义匹配补充
         if len(articles) < 3 and self.rag_store:
             try:
-                rag_articles = self.rag_store.get_recent(code, self.max_articles)
-                # 去重合并
+                query = self._build_rag_query(articles, code)
+                rag_articles = self.rag_store.search(
+                    code, query=query, n=self.max_articles
+                )
                 existing_titles = {a["title"][:60] for a in articles}
                 for ra in rag_articles:
                     if ra["title"][:60] not in existing_titles:
@@ -55,6 +57,15 @@ class NewsFetcher:
                 pass
 
         return articles[:self.max_articles]
+
+    @staticmethod
+    def _build_rag_query(articles: list[dict], code: str) -> str:
+        """构造语义检索 query：优先把已有实时新闻标题拼成主题句去做向量匹配，
+        实时为空时退化为股票代码 + 通用主题词。"""
+        titles = [a.get("title", "").strip() for a in articles if a.get("title")]
+        if titles:
+            return " ".join(titles[:3])
+        return f"{code} 股票 最新动态 业绩 利好 利空"
 
     def index_articles(self, code: str, articles: list[dict]) -> int:
         """将已分析的新闻写入 RAG 向量库"""
