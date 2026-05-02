@@ -29,6 +29,7 @@ class SentimentResult:
     confidence: float         # 整体置信度 0.0 ~ 1.0
     articles: list[dict] = field(default_factory=list)
     summary: str = ""
+    keywords: list[tuple[str, float]] = field(default_factory=list)  # TF-IDF 舆情关键词
 
 
 class SentimentAnalyzer:
@@ -84,6 +85,13 @@ class SentimentAnalyzer:
             score=score, label=label, confidence=confidence,
             articles=enriched, summary=summary,
         )
+
+        # 基于原始新闻全文抽取 TF-IDF 关键词
+        try:
+            from sentiment.keyword_extractor import extract_keywords
+            result.keywords = extract_keywords(articles, top_k=10)
+        except Exception:
+            pass
 
         # 将已分析新闻写入 RAG 向量库（后台积累）
         try:

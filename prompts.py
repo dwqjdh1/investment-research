@@ -14,6 +14,9 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 ## 舆情数据
 {sentiment_data}
 
+## 舆情关键词（基于 jieba TF-IDF 抽取，权重越高代表当期热度越大）
+{keywords_data}
+
 ---
 
 按结构输出：
@@ -30,6 +33,7 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 ### 二点五、舆情判断
 - 根据舆情数据判断市场情绪倾向（1-2句）
 - 是否存在重大利好/利空消息（1句）
+- 结合舆情关键词，点出当前最受关注的 1-2 个热点话题
 
 ### 三、SWOT 分析
 | 维度 | 分析 |

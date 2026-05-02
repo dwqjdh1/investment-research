@@ -85,6 +85,16 @@ def _format_sentiment_data(sentiment) -> str:
     return "\n".join(lines)
 
 
+def _format_keywords_data(sentiment) -> str:
+    if sentiment is None:
+        return "暂无关键词数据"
+    keywords = getattr(sentiment, "keywords", None)
+    if not keywords:
+        return "暂无关键词数据"
+    from sentiment.keyword_extractor import format_keywords
+    return format_keywords(keywords)
+
+
 class ReportGenerator:
     def __init__(self, client: LLMClient = None):
         self.client = client or LLMClient()
@@ -98,6 +108,7 @@ class ReportGenerator:
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
             sentiment_data=_format_sentiment_data(sentiment_data),
+            keywords_data=_format_keywords_data(sentiment_data),
         )
         try:
             report = self.client.generate_report(SYSTEM_PROMPT, prompt)
@@ -115,6 +126,7 @@ class ReportGenerator:
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
             sentiment_data=_format_sentiment_data(sentiment_data),
+            keywords_data=_format_keywords_data(sentiment_data),
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},

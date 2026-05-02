@@ -693,6 +693,13 @@ if st.session_state.report:
                 if sentiment.summary:
                     st.markdown("---")
                     st.markdown(sentiment.summary)
+                if sentiment.keywords:
+                    st.markdown("---")
+                    st.markdown("#### 舆情热点关键词（jieba TF-IDF）")
+                    kw_md = "  ".join(
+                        f"`{kw}` `{w:.2f}`" for kw, w in sentiment.keywords[:10]
+                    )
+                    st.markdown(kw_md)
                 st.markdown("---")
                 st.markdown("#### 逐条分析")
                 emoji_map = {"positive": "🟢", "negative": "🔴", "neutral": "🟡"}
