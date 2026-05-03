@@ -40,7 +40,6 @@ def _format_financial_data(financial: dict) -> str:
         if val is not None:
             lines.append(f"- {label}：{val / div:.2f}{unit}")
 
-    # 只保留最近1个季度趋势（削减prompt大小）
     history = financial.get("history", [])
     if history:
         lines.append("")
@@ -71,35 +70,30 @@ def _format_valuation_data(valuation: dict) -> str:
     return "\n".join(lines) if lines else "暂无"
 
 
-def _format_sentiment_data(sentiment) -> str:
+def format_sentiment_section(sentiment) -> str:
+    """模板化拼接舆情段落（不调 LLM），追加到研报末尾。"""
     if sentiment is None:
-        return "暂无舆情数据"
-    lines = [
-        f"- 情感倾向：{sentiment.label}",
-        f"- 综合得分：{sentiment.score:.2f}（-1极度负面 ~ +1极度正面）",
-        f"- 置信度：{sentiment.confidence:.0%}",
-        f"- 分析新闻数：{len(sentiment.articles)}条",
-    ]
+        return ""
+
+    lines = ["", "### 附：舆情快照"]
+    lines.append(f"- **情感倾向**：{sentiment.label}")
+    lines.append(f"- **综合得分**：{sentiment.score:.2f}（-1极度负面 ~ +1极度正面）")
+    lines.append(f"- **置信度**：{sentiment.confidence:.0%}")
+    lines.append(f"- **分析新闻数**：{len(sentiment.articles)} 条")
     if sentiment.summary:
-        lines.append(f"- 摘要：{sentiment.summary}")
-    return "\n".join(lines)
-
-
-def _format_keywords_data(sentiment) -> str:
-    if sentiment is None:
-        return "暂无关键词数据"
+        lines.append(f"- **舆情摘要**：{sentiment.summary}")
     keywords = getattr(sentiment, "keywords", None)
-    if not keywords:
-        return "暂无关键词数据"
-    from sentiment.keyword_extractor import format_keywords
-    return format_keywords(keywords)
+    if keywords:
+        kw_str = "、".join(f"{kw}({w:.2f})" for kw, w in keywords[:8])
+        lines.append(f"- **热点关键词**：{kw_str}")
+    return "\n".join(lines)
 
 
 class ReportGenerator:
     def __init__(self, client: LLMClient = None):
         self.client = client or LLMClient()
 
-    def generate(self, data: dict, sentiment_data=None) -> tuple[str, str]:
+    def generate(self, data: dict) -> tuple[str, str]:
         name = (data.get("info") or {}).get("name") or data.get("code", "未知")
         prompt = COMPREHENSIVE_REPORT_PROMPT.format(
             stock_name=name,
@@ -107,8 +101,6 @@ class ReportGenerator:
             basic_info=_format_basic_info(data.get("info", {})),
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
-            sentiment_data=_format_sentiment_data(sentiment_data),
-            keywords_data=_format_keywords_data(sentiment_data),
         )
         try:
             report = self.client.generate_report(SYSTEM_PROMPT, prompt)
@@ -116,7 +108,7 @@ class ReportGenerator:
         except Exception as e:
             return "", f"LLM调用失败：{str(e)}"
 
-    def generate_stream(self, data: dict, sentiment_data=None):
+    def generate_stream(self, data: dict):
         """流式生成研报，逐步返回文本块"""
         name = (data.get("info") or {}).get("name") or data.get("code", "未知")
         prompt = COMPREHENSIVE_REPORT_PROMPT.format(
@@ -125,8 +117,6 @@ class ReportGenerator:
             basic_info=_format_basic_info(data.get("info", {})),
             financial_data=_format_financial_data(data.get("financial", {})),
             valuation_data=_format_valuation_data(data.get("valuation", {})),
-            sentiment_data=_format_sentiment_data(sentiment_data),
-            keywords_data=_format_keywords_data(sentiment_data),
         )
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},

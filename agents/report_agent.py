@@ -1,5 +1,5 @@
 from agents.base import Agent
-from report_generator import ReportGenerator
+from report_generator import ReportGenerator, format_sentiment_section
 
 
 class ReportAgent(Agent):
@@ -15,5 +15,7 @@ class ReportAgent(Agent):
     def execute(self, context: dict) -> dict:
         data = context["data"]
         sentiment = context.get("sentiment")
-        report, error = self._generator.generate(data, sentiment_data=sentiment)
+        report, error = self._generator.generate(data)
+        if report and sentiment is not None:
+            report += format_sentiment_section(sentiment)
         return {"report_text": report, "report_error": error}

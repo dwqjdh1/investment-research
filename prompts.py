@@ -1,6 +1,6 @@
 SYSTEM_PROMPT = """你是一位资深的股票分析师。分析风格：客观中立、基于数据、语言精炼、要点突出。报告使用 Markdown 格式。"""
 
-COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写投资研报。基于以下数据，不要编造。
+COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**({stock_code})撰写投资研报。基于以下数据，不要编造。
 
 ## 基本信息
 {basic_info}
@@ -10,12 +10,6 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 
 ## 估值与行情
 {valuation_data}
-
-## 舆情数据
-{sentiment_data}
-
-## 舆情关键词（基于 jieba TF-IDF 抽取，权重越高代表当期热度越大）
-{keywords_data}
 
 ---
 
@@ -30,12 +24,7 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 - 成长性（营收/利润趋势，1-2句）
 - 财务健康度（负债水平，1句）
 
-### 三、舆情判断
-- 根据舆情数据判断市场情绪倾向（1-2句）
-- 是否存在重大利好/利空消息（1句）
-- 结合舆情关键词，点出当前最受关注的 1-2 个热点话题
-
-### 四、SWOT 分析
+### 三、SWOT 分析
 **强制要求**：
 1. 每个维度单元格内**必须输出 3 条**要点，用顿号「、」串成一行
 2. 严禁使用 `<br>`、HTML 标签、`/`、换行符或 markdown 列表项
@@ -50,11 +39,11 @@ COMPREHENSIVE_REPORT_PROMPT = """请为 **{stock_name}**（{stock_code}）撰写
 | 机会(O) | 政策利好、行业渗透率提升、国产替代加速 |
 | 威胁(T) | 竞争加剧、原材料价格波动、宏观需求承压 |
 
-### 五、估值判断
+### 四、估值判断
 - 当前PE/PB水平（1句）
 - 估值结论：低估 / 合理 / 高估（给出理由）
 
-### 六、投资建议
+### 五、投资建议
 - 核心逻辑（1-2条）
 - 主要风险（1-2条）
 - 评级：买入 / 增持 / 中性 / 减持

@@ -1,7 +1,7 @@
 import streamlit as st
 from concurrent.futures import ThreadPoolExecutor
 from data_fetcher import fetch_all_data, detect_market, search_stock, quick_resolve, warmup_market_data
-from report_generator import ReportGenerator
+from report_generator import ReportGenerator, format_sentiment_section
 from visualizer import (
     create_financial_trend_chart,
     create_profitability_chart,
@@ -372,7 +372,7 @@ if "pending_resolve" not in st.session_state:
 
 
 def _generate(code: str, name: str, market: str, base_url: str, api_key: str, model: str):
-    """Core report generation with streaming LLM and parallel chart rendering."""
+    """情感分析与研报 LLM 真正并行；研报正文由 LLM 流式输出，舆情段落由模板拼接。"""
     if api_key:
         report_gen.update_llm_config(
             base_url=base_url.strip() if base_url else None,
@@ -404,54 +404,57 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     valuation = data.get("valuation", {})
     prices = data.get("prices", {})
 
-    # 情感分析（先于报告生成，使舆情数据纳入研报）
     sentiment_result = None
     sentiment_error = None
-    if config.SENTIMENT_ENABLED:
-        try:
-            # 使用与 report_gen 相同的 LLM 配置
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        f_price = executor.submit(create_price_chart, prices, stock_name)
+        f_trend = executor.submit(create_financial_trend_chart, financial, stock_name)
+        f_profit = executor.submit(create_profitability_chart, financial, stock_name)
+        f_valuation = executor.submit(create_valuation_gauge, valuation, stock_name)
+
+        # 情感分析与研报 LLM 并行：提交到线程池，研报流式输出立即开始，不等情感分析
+        f_sentiment = None
+        if config.SENTIMENT_ENABLED:
             sentiment_llm = LLMClient(
                 base_url=base_url.strip() if base_url else None,
                 api_key=api_key.strip() if api_key else None,
                 model=model.strip() if model else None,
             )
             sentiment_analyzer = SentimentAnalyzer(llm_client=sentiment_llm)
-            sentiment_result = sentiment_analyzer.analyze(code.strip(), market)
-        except Exception as e:
-            sentiment_error = str(e)
-            st.warning(f"舆情分析失败：{e}")
+            f_sentiment = executor.submit(sentiment_analyzer.analyze, code.strip(), market)
 
-    # 图表与LLM并行生成
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        f_price = executor.submit(create_price_chart, prices, stock_name)
-        f_trend = executor.submit(create_financial_trend_chart, financial, stock_name)
-        f_profit = executor.submit(create_profitability_chart, financial, stock_name)
-        f_valuation = executor.submit(create_valuation_gauge, valuation, stock_name)
-        f_sentiment_chart = executor.submit(create_sentiment_gauge, sentiment_result, stock_name)
-
-        # 流式输出LLM研报（含舆情数据）
+        # 研报 LLM 流式输出（主线程，已与情感分析解耦）
         stream_placeholder = st.empty()
         accumulated = ""
         try:
-            for chunk in report_gen.generate_stream(data, sentiment_data=sentiment_result):
+            for chunk in report_gen.generate_stream(data):
                 accumulated += chunk
                 stream_placeholder.markdown(accumulated)
             report_text = accumulated
             error = ""
-            stream_placeholder.empty()  # 流式完成后清除，避免重复显示
+            stream_placeholder.empty()
         except Exception as e:
             report_text = ""
             error = f"LLM调用失败：{str(e)}"
             stream_placeholder.empty()
 
-        # 收集图表结果
+        # 等待情感分析（如已完成立即返回，否则等剩余时间）
+        if f_sentiment is not None:
+            try:
+                sentiment_result = f_sentiment.result()
+            except Exception as e:
+                sentiment_error = str(e)
+                st.warning(f"舆情分析失败：{e}")
+
+        # 情感图表依赖情感结果，最后渲染（毫秒级）
+        fig_sentiment = create_sentiment_gauge(sentiment_result, stock_name)
+
         fig_price = f_price.result()
         fig_trend = f_trend.result()
         fig_profit = f_profit.result()
         fig_valuation = f_valuation.result()
-        fig_sentiment = f_sentiment_chart.result()
 
-    # 存储图表和舆情结果（即使LLM失败也能展示）
     st.session_state.price_chart = fig_price
     st.session_state.trend_chart = fig_trend
     st.session_state.profit_chart = fig_profit
@@ -467,7 +470,8 @@ def _generate(code: str, name: str, market: str, base_url: str, api_key: str, mo
     if meta_html:
         header += f"> *{meta_html}*\n\n---\n"
 
-    st.session_state.report = header + report_text
+    sentiment_section = format_sentiment_section(sentiment_result)
+    st.session_state.report = header + report_text + sentiment_section
     st.session_state.stock_info = f"已生成 {stock_name} ({code}) 的研报"
 
 
