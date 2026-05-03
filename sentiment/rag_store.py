@@ -7,7 +7,8 @@ from datetime import datetime
 # 国内服务器优先从镜像下载模型
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
-# embedding 方案：text2vec（国产中文模型）/ default（无需下载）
+# 仅启用 text2vec（国产中文模型）；禁止降级到 ChromaDB DefaultEmbeddingFunction，
+# 否则会触发下载非中文优化的 all-MiniLM-L6-v2（境外 S3，国内极慢）
 EMBEDDING_TYPE = os.getenv("RAG_EMBEDDING", "text2vec").lower()
 
 # 中文 text2vec 模型（ModelScope 镜像可加速）
@@ -15,22 +16,19 @@ TEXT2VEC_MODEL = "shibing624/text2vec-base-chinese"
 
 
 def _create_embedding_fn():
-    """创建 embedding 函数，优先使用国产中文模型"""
-    if EMBEDDING_TYPE == "text2vec":
-        try:
-            # SentenceTransformer 支持从 HF_ENDPOINT 镜像下载
-            fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                model_name=TEXT2VEC_MODEL,
-                device="cpu",
-            )
-            fn(["测试文本"])  # 验证可用
-            print(f"[RAG] 使用 text2vec-base-chinese 模型（国产中文优化）")
-            return fn
-        except Exception as e:
-            print(f"[RAG] text2vec 模型加载失败: {e}，降级使用 Default")
-    # 默认方案：无需下载，内置轻量 embedding
-    print("[RAG] 使用 Default embedding（无需下载模型）")
-    return embedding_functions.DefaultEmbeddingFunction()
+    """仅返回 text2vec embedding；加载失败直接抛异常，由上层降级关闭 RAG。
+    严禁回退到 DefaultEmbeddingFunction（会下载 all-MiniLM-L6-v2）。"""
+    if EMBEDDING_TYPE != "text2vec":
+        raise RuntimeError(
+            f"不支持 RAG_EMBEDDING={EMBEDDING_TYPE}；项目仅启用 text2vec"
+        )
+    fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+        model_name=TEXT2VEC_MODEL,
+        device="cpu",
+    )
+    fn(["测试文本"])  # 验证可用
+    print("[RAG] 使用 text2vec-base-chinese 模型（国产中文优化）")
+    return fn
 
 
 class NewsVectorStore:
