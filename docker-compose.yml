@@ -8,4 +8,5 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./hf_cache:/home/appuser/.cache/huggingface
     restart: unless-stopped

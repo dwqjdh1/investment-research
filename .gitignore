@@ -52,6 +52,9 @@ build/
 # ChromaDB vector store
 data/
 
+# HuggingFace 模型缓存（docker volume 挂载点）
+hf_cache/
+
 # Claude Code
 .claude/
 
